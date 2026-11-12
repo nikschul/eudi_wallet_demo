@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#179C7D">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icons/wallet.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/wallet.js"></script>
+  <title>Meine Wallet · EUDI Demo</title>
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="/"><span class="brand-mark" aria-hidden="true">W</span> EUDI <span class="brand-light">/ Demo</span></a>
+    <nav aria-label="Hauptnavigation"><a href="/wallet.html" aria-current="page">Wallet</a><a href="/issuer.html">Issuer</a></nav>
+  </header>
+  <main class="shell mobile-shell">
+    <span class="eyebrow">01 / Holder</span><h1>Meine Wallet</h1>
+    <div id="error" class="message error" role="alert" hidden></div>
+    <div id="notice" class="message notice" role="status" hidden></div>
+    <div id="app" class="stack"><p>Deine Wallet wird geladen …</p></div>
+    <noscript>Bitte aktiviere JavaScript, um deine Wallet zu nutzen.</noscript>
+    <footer>Deine privaten Schlüssel bleiben in diesem Browser.</footer>
+  </main>
+</body>
+</html>

@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#179C7D">
+  <meta name="description" content="Erlebe digitale Identität: eigene Wallet, eigener Gastausweis und Check-in per QR-Code.">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icons/wallet.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/index.js"></script>
+  <title>EUDI Wallet Workshop</title>
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="/"><span class="brand-mark" aria-hidden="true">W</span> EUDI <span class="brand-light">/ Demo</span></a>
+    <nav aria-label="Hauptnavigation"><a href="/wallet.html">Wallet</a><a href="/kiosk.html">Empfang</a></nav>
+  </header>
+  <main class="shell landing">
+    <div id="error" class="message error" role="alert" hidden></div>
+    <div id="notice" class="message notice" role="status" hidden></div>
+    <section class="hero">
+      <span class="eyebrow">Digitale Identität zum Ausprobieren</span>
+      <h1 data-event-title>EUDI Wallet Workshop</h1>
+      <p class="lead">Deine Identität.<br><strong>Deine Entscheidung.</strong></p>
+      <p>Erstelle deine Wallet, stelle dir einen Gastausweis aus und checke am Empfang ein. Direkt im Browser, ohne Konto.</p>
+      <div class="journey" aria-label="Dein Weg zum Check-in">
+        <span><b>01</b> Wallet</span><span><b>02</b> Gastausweis</span><span><b>03</b> Check-in</span>
+      </div>
+      <div class="stack">
+        <a class="button" href="/wallet.html">1. Wallet erstellen</a>
+        <span id="wallet-hint" class="muted" hidden>Wallet öffnen – deine Wallet ist bereits angelegt.</span>
+        <a class="button secondary" href="/issuer.html">2. Eigenen Issuer anlegen</a>
+      </div>
+    </section>
+    <section class="card info">
+      <h2>Ein Browser. Dein Gerät.</h2>
+      <p>Öffne alle QR-Links im <strong>selben Browser</strong>: auf dem iPhone meist Safari, auf Android meist Chrome. Im privaten Modus können deine Daten beim Schließen verloren gehen.</p>
+      <p>Eine Installation ist nicht nötig. Wenn du die PWA zum Home-Bildschirm hinzufügst, kann sie auf iOS einen <strong>eigenen Speicher</strong> haben. Für den Kamera-QR-Ablauf empfehlen wir deshalb den Browser. Falls du die PWA nutzt, übertrage den aktuellen Empfangslink über „Check-in-Link öffnen“ in der Wallet.</p>
+      <button id="install" class="secondary" type="button" hidden>Demo als PWA installieren</button>
+      <p class="muted">Auf iOS: Teilen → Zum Home-Bildschirm. Die Installation ist optional.</p>
+      <div data-explain="real"></div>
+    </section>
+    <footer><span>Simulation · Keine amtlichen Ausweise</span><a href="/admin.html">Moderation</a></footer>
+  </main>
+</body>
+</html>

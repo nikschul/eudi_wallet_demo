@@ -1,0 +1,47 @@
+services:
+  app:
+    build: .
+    image: eudi-wallet-demo:local
+    restart: unless-stopped
+    init: true
+    environment:
+      PORT: "3000"
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:${PORT:-3000}}
+      TRUST_MODE: ${TRUST_MODE:-auto}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      VERIFIER_NAME: ${VERIFIER_NAME:-Fraunhofer ISST – Empfang}
+      EVENT_TITLE: ${EVENT_TITLE:-EUDI Wallet Workshop}
+    ports:
+      - "127.0.0.1:${PORT:-3000}:3000"
+    volumes:
+      - demo-data:/app/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+  caddy:
+    image: caddy:2-alpine
+    profiles: ["https"]
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+
+volumes:
+  demo-data:
+  caddy-data:
+  caddy-config:

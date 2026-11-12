@@ -1,0 +1,22 @@
+{
+  "name": "eudi-wallet-demo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Browserbasierte EUDI-Wallet-Simulation mit QR-Check-in",
+  "type": "module",
+  "engines": {
+    "node": ">=20.6"
+  },
+  "scripts": {
+    "start": "node server/index.js",
+    "start:env": "node --env-file=.env server/index.js",
+    "check": "node scripts/check.js",
+    "test": "node --test",
+    "purge": "node server/purge.js",
+    "purge:env": "node --env-file=.env server/purge.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "qrcode": "^1.5.4"
+  }
+}

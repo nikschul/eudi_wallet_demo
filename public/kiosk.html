@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#179C7D">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icons/wallet.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/kiosk.js"></script>
+  <title>Empfang · EUDI Demo</title>
+</head>
+<body class="kiosk-body">
+  <header class="site-header">
+    <a class="brand" href="/"><span class="brand-mark" aria-hidden="true">W</span> EUDI <span class="brand-light">/ Empfang</span></a>
+    <span class="event-label" data-event-title>EUDI Wallet Workshop</span>
+    <span class="live-indicator"><span aria-hidden="true"></span> Live-Check-in</span>
+  </header>
+  <main class="kiosk-layout">
+    <section class="kiosk-main">
+      <div><span class="eyebrow">Dein Gastausweis. Sicher vorgezeigt.</span><h1>Check-in mit der<br>EUDI Wallet</h1></div>
+      <div id="error" class="message error" role="alert" hidden></div>
+      <div id="notice" class="message notice" role="status" hidden></div>
+      <div id="qr-stage" class="qr-stage">
+        <div class="qr-frame"><img id="checkin-qr" width="640" height="640" alt="QR-Code zum Check-in mit der Wallet" hidden><span id="qr-loading">QR-Code wird erstellt …</span></div>
+        <a id="checkin-link" class="qr-link" href="/wallet.html">Check-in-Link öffnen</a>
+        <ol class="kiosk-instructions"><li>Kamera öffnen</li><li>QR-Code scannen</li><li>Angaben freigeben</li></ol>
+      </div>
+      <div id="kiosk-result" class="kiosk-result" role="status" hidden></div>
+      <aside class="onboarding-qr"><img id="start-qr" width="112" height="112" alt="QR-Code zur Startseite" hidden><div><strong>Noch keine Wallet?</strong><p>Hier starten. In drei Schritten dabei.</p><span id="public-url" class="muted"></span></div></aside>
+    </section>
+    <aside class="kiosk-sidebar">
+      <section class="card verification-panel">
+        <span class="eyebrow">Echte Kryptografie · Verständlich erklärt</span>
+        <h2>Was der Empfang gerade geprüft hat</h2>
+        <div id="verification"><p class="muted">Beim ersten Check-in siehst du hier alle Prüfschritte – von der Signatur bis zum Replay-Schutz.</p></div>
+        <div data-explain="verify"></div>
+      </section>
+      <section class="card attendees-panel">
+        <div class="card-top"><h2>Heute eingecheckt</h2><span id="attendee-count" class="count">0</span></div>
+        <ul id="attendees" class="attendee-list"><li class="muted">Der erste Gast bist vielleicht du.</li></ul>
+      </section>
+      <p class="kiosk-disclaimer">Lernsimulation · Keine amtliche EUDI Wallet</p>
+    </aside>
+  </main>
+</body>
+</html>
