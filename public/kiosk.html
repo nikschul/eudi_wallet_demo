@@ -31,18 +31,27 @@
     </section>
     <aside class="kiosk-sidebar">
       <section class="card progress-panel">
-        <h2>Workshop-Fortschritt</h2>
-        <div id="progress-stats" class="progress-stats" aria-live="polite"></div>
-        <ul id="progress-list" class="progress-list"><li class="muted">Noch kein Issuer registriert.</li></ul>
+        <h2>Workshop-Übersicht</h2>
+        <div id="progress-stats" class="progress-stats" aria-live="polite">
+          <div><strong id="registered-count">–</strong><span>Registrierte Issuer</span></div>
+          <div><strong id="checkin-count">–</strong><span>Erfolgreiche Check-ins</span></div>
+        </div>
+        <label class="field issuer-search" for="issuer-search">Issuer suchen
+          <input id="issuer-search" type="search" placeholder="Name, DID oder Fingerabdruck" autocomplete="off" aria-controls="progress-list">
+        </label>
+        <p class="muted list-hint">Registrierung ist kein Vertrauen; keine Freigabe einzelner Ausweise.</p>
+        <ul id="progress-list" class="progress-list" tabindex="0" aria-label="Registrierte Issuer"></ul>
+        <p id="issuer-empty" class="muted list-hint">Noch kein Issuer registriert.</p>
+        <p id="issuer-no-match" class="muted list-hint" hidden>Keine passenden Issuer. Suche ändern oder leeren.</p>
       </section>
       <section class="card activity-panel">
-        <div class="card-top"><h2>Check-in-Versuche</h2><span id="attempt-count" class="count">0</span></div>
+        <h2>Check-in-Versuche</h2>
         <p class="muted list-hint">Letzte 100 Versuche seit Serverstart. Aufklappen für alle Prüfschritte.</p>
         <ul id="attempts" class="attempt-list"><li class="muted">Noch keine Prüfungen seit Serverstart. Mehrere Handys können denselben QR scannen.</li></ul>
         <details class="verification-help"><summary>Wie wird geprüft?</summary><div data-explain="verify"></div></details>
       </section>
       <section class="card attendees-panel">
-        <div class="card-top"><h2>Heute eingecheckt</h2><span id="attendee-count" class="count">0</span></div>
+        <h2>Heute eingecheckt</h2>
         <p class="muted list-hint">Einträge aufklappen: Welche Ausweise haben welche Angaben geteilt? Nicht freigegebene Felder kennt der Empfang nicht.</p>
         <ul id="attendees" class="attendee-list"><li class="muted">Der erste Gast bist vielleicht du.</li></ul>
       </section>

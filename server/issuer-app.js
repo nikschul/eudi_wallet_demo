@@ -6,6 +6,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as sd from '../public/lib/sdjwt.js';
 import { managementAuth } from './management-auth.js';
+import { createCredentialStore } from './credential-store.js';
+import { deflateSync } from 'node:zlib';
+import { STATUS_LIST_TTL } from '../public/lib/credential-status.js';
 import {
   EMPLOYEE_VCT, REGISTRATION_PROOF, HOLDER_PROOF, publicOrigin, validatePublicJwk, signProof, verifyProof,
 } from '../public/lib/protocol.js';
@@ -42,7 +45,7 @@ function matchesSecret(value, expected) {
 
 function registryMetadata(record) {
   const result = {};
-  for (const key of ['did', 'name', 'employeeName', 'publicUrl', 'trusted', 'ownerName',
+  for (const key of ['did', 'name', 'employeeName', 'publicUrl', 'trusted', 'proofVerified', 'ownerName',
     'fingerprint', 'createdAt', 'updatedAt', 'registeredAt']) {
     if (['string', 'boolean'].includes(typeof record[key]) || record[key] === null) result[key] = record[key];
   }
@@ -67,6 +70,7 @@ export async function createIssuerApp({
     await validatePublicJwk(identity.publicJwk);
     if (sd.didFromJwk(identity.publicJwk) !== identity.did
       || identity.privateJwk?.d === undefined
+      || (identity.credentialStoreVersion !== undefined && identity.credentialStoreVersion !== 1)
       || JSON.stringify(sd.publicPart(identity.privateJwk)) !== JSON.stringify(sd.publicPart(identity.publicJwk))) {
       throw new Error('Ungültige Issuer-Schlüssel.');
     }
@@ -95,6 +99,13 @@ export async function createIssuerApp({
       if (handle) await handle.close();
       await unlink(temporary).catch((error) => { if (error.code !== 'ENOENT') throw error; });
     }
+  }
+
+  const credentials = await createCredentialStore(dataDirectory, identity?.did, {
+    required: identity?.credentialStoreVersion === 1,
+  });
+  if (identity && identity.credentialStoreVersion !== 1) {
+    await saveIdentity({ ...identity, credentialStoreVersion: 1 });
   }
 
   let mutation = Promise.resolve();
@@ -162,7 +173,7 @@ export async function createIssuerApp({
 
   function live(offer) {
     if (clock() >= offer.expires) throw new HttpError(410, 'Das Angebot ist abgelaufen. Bitte erstelle einen neuen QR-Code.');
-    if (offer.status === 'cancelled') throw new HttpError(410, 'Das Angebot wurde abgebrochen.');
+    if (offer.status === 'cancelled') throw new HttpError(410, offer.cancellationReason || 'Das Angebot wurde abgebrochen.');
   }
 
   function findOffer(id, token, admin = false) {
@@ -181,13 +192,14 @@ export async function createIssuerApp({
       id: offer.id, status: offer.status, issuerDid: offer.issuerDid, issuerName: offer.issuerName,
       employeeName: offer.employeeName, claims: offer.claims, nonce: offer.nonce,
       aud: publicUrl, expiresAt: new Date(offer.expires).toISOString(),
-      ...(offer.pairingCode ? { pairingCode: offer.pairingCode } : {}),
+      ...(admin && offer.status === 'offered' ? { transactionCode: offer.transactionCode } : {}),
+      ...(offer.cancellationReason ? { cancellationReason: offer.cancellationReason } : {}),
       ...(admin ? { holderDid: offer.holderDid || null } : {}),
     };
   }
 
-  async function holderProof(offer, body) {
-    bodyFields(body, ['proof']);
+  async function holderProof(offer, body, fields = ['proof']) {
+    bodyFields(body, fields);
     try {
       if (typeof body.proof !== 'string' || body.proof.length > 10000) throw new Error();
       const { payload } = sd.decodeJwt(body.proof);
@@ -219,7 +231,7 @@ export async function createIssuerApp({
     res.set('Cache-Control', 'no-store');
     next();
   });
-  app.use('/api/offers', (req, res, next) => {
+  app.use(['/api/offers', '/api/status-list'], (req, res, next) => {
     res.vary('Origin');
     if (req.get('Origin') === workshopUrl) {
       res.set({
@@ -236,6 +248,15 @@ export async function createIssuerApp({
   app.get('/api/config', (req, res) => res.json({
     role: 'issuer', publicUrl, workshopUrl, eventTitle: 'Meine Ausweisstelle',
   }));
+  app.get('/api/status-list', wrap(async (req, res) => {
+    const issuer = requireIdentity();
+    const iat = Math.floor(clock() / 1000);
+    const token = await sd.signJwt({ alg: 'ES256', typ: 'statuslist+jwt', kid: `${issuer.did}#0` }, {
+      iss: issuer.did, sub: `${publicUrl}/api/status-list`, iat, exp: iat + STATUS_LIST_TTL, ttl: STATUS_LIST_TTL,
+      status_list: { bits: 1, lst: sd.b64url(deflateSync(credentials.statusBytes())) },
+    }, issuer.privateJwk);
+    res.type('application/statuslist+jwt').send(token);
+  }));
   const status = () => ({
     ...(identity ? { did: identity.did, name: identity.name, employeeName: identity.employeeName,
       ...(identity.registration ? { registration: registryMetadata(identity.registration) } : {}) } : {}),
@@ -243,6 +264,14 @@ export async function createIssuerApp({
   });
   const adminToken = managementAuth(app, '/api/issuer');
   app.get('/api/issuer/status', (req, res) => res.json(status()));
+  app.get('/api/issuer/credentials', (req, res) => res.json(credentials.list()));
+  app.post('/api/issuer/credentials/:id/revoke', wrap(async (req, res) => {
+    bodyFields(req.body, []);
+    if (!/^[A-Za-z0-9_-]{43}$/.test(req.params.id)) throw new HttpError(400, 'Die Credential-ID ist ungültig.');
+    const record = await serialize(() => credentials.revoke(req.params.id, new Date(clock()).toISOString()));
+    if (!record) throw new HttpError(404, 'Dieser Ausweis wurde nicht von diesem Issuer ausgestellt.');
+    res.json(record);
+  }));
   app.post('/api/issuer/setup', wrap(async (req, res) => {
     bodyFields(req.body, ['name', 'employeeName']);
     const name = text(req.body.name, 'Name der Ausweisstelle');
@@ -252,6 +281,7 @@ export async function createIssuerApp({
       const unchanged = identity?.name === name && identity?.employeeName === employeeName;
       await saveIdentity({
         did: pair.did, publicJwk: pair.publicJwk, privateJwk: pair.privateJwk, name, employeeName,
+        credentialStoreVersion: 1,
         ...(unchanged && identity.registration ? { registration: identity.registration } : {}),
       });
     });
@@ -296,13 +326,18 @@ export async function createIssuerApp({
       role: req.body.claims.role === undefined ? 'Mitarbeitende' : text(req.body.claims.role, 'Rolle'),
     };
     const issuer = requireIdentity();
-    if (!await lookupRegistration(issuer) || issuer !== identity) {
+    const registration = await lookupRegistration(issuer);
+    if (!registration || issuer !== identity) {
       throw new HttpError(409, 'Bitte registriere die aktuellen Angaben deiner Ausweisstelle zuerst bei der Workshop-Zentrale.');
+    }
+    if (!registration.trusted || !registration.proofVerified || !registration.ownerName) {
+      throw new HttpError(409, 'Der Empfang muss deinen Issuer zuerst im Setup als vertrauenswürdig kennzeichnen. Danach kannst du Ausweise ausstellen.');
     }
     cleanOffers();
     if (offers.size >= 1000) throw new HttpError(429, 'Es gibt zu viele offene Angebote. Bitte warte auf deren Ablauf.');
     const offer = {
       id: randomUUID(), token: randomBytes(32).toString('base64url'),
+      transactionCode: String(randomInt(1000000)).padStart(6, '0'), codeAttempts: 0,
       nonce: randomBytes(32).toString('base64url'), expires: clock() + lifetime, status: 'offered',
       issuerDid: issuer.did, issuerName: issuer.name, employeeName: issuer.employeeName, claims,
     };
@@ -315,24 +350,37 @@ export async function createIssuerApp({
     res.json(offerMetadata(findOffer(req.params.id, null, true), true));
   }));
   app.post('/api/issuer/offers/:id/approve', wrap(async (req, res) => {
-    bodyFields(req.body, ['pairingCode']);
+    bodyFields(req.body, []);
     const offer = findOffer(req.params.id, null, true);
     live(offer);
     if (offer.status !== 'bound' || offer.signing || !offer.holderJwk) {
-      throw new HttpError(409, 'Nur ein verbundenes, noch nicht signiertes Wallet-Angebot kann freigegeben werden.');
-    }
-    if (!matchesSecret(req.body.pairingCode, offer.pairingCode)) {
-      throw new HttpError(400, 'Der Vergleichscode stimmt nicht überein. Vergleiche ihn mit der Wallet.');
+      throw new HttpError(409, 'Nur ein verbundenes, noch nicht signiertes Wallet-Angebot kann signiert werden.');
     }
     offer.signing = true;
     try {
-      const sdjwt = await sd.issueSdJwt({
-        issuerDid: offer.issuerDid, issuerPrivateJwk: requireIdentity().privateJwk,
-        holderPublicJwk: offer.holderJwk, vct: EMPLOYEE_VCT, claims: offer.claims, validDays: 1,
+      await serialize(async () => {
+        const registration = await lookupRegistration(requireIdentity());
+        live(offer);
+        if (!registration?.trusted || !registration.proofVerified || !registration.ownerName) {
+          throw new HttpError(409, 'Der Empfang vertraut diesem Issuer derzeit nicht. Bitte kläre das Issuer-Setup vor der Ausstellung.');
+        }
+        const statusIndex = credentials.allocateIndex();
+        const sdjwt = await sd.issueSdJwt({
+          issuerDid: offer.issuerDid, issuerPrivateJwk: requireIdentity().privateJwk,
+          holderPublicJwk: offer.holderJwk, vct: EMPLOYEE_VCT, claims: offer.claims, validDays: 1,
+          status: { status_list: { idx: statusIndex, uri: `${publicUrl}/api/status-list` } },
+        });
+        live(offer);
+        const { payload } = sd.describeCredential(sdjwt);
+        await credentials.add({
+          id: await sd.sha256b64(sd.parseSdJwt(sdjwt).jwt), issuerDid: offer.issuerDid,
+          holderDid: offer.holderDid, claims: offer.claims, statusIndex,
+          issuedAt: new Date(payload.iat * 1000).toISOString(),
+          expiresAt: new Date(payload.exp * 1000).toISOString(), revokedAt: null,
+        });
+        offer.sdjwt = sdjwt;
+        offer.status = 'issued';
       });
-      live(offer);
-      offer.sdjwt = sdjwt;
-      offer.status = 'issued';
       res.json(offerMetadata(offer, true));
     } finally {
       offer.signing = false;
@@ -353,14 +401,25 @@ export async function createIssuerApp({
   }));
   app.post('/api/offers/:id/claim', wrap(async (req, res) => {
     const offer = findOffer(req.params.id, req.get('X-Offer-Token'));
-    const holder = await holderProof(offer, req.body);
+    const holder = await holderProof(offer, req.body, ['proof', 'transactionCode']);
     if (offer.holderDid && offer.holderDid !== holder.did) {
       throw new HttpError(409, 'Dieses Angebot ist bereits mit einer anderen Wallet verbunden.');
     }
     if (!offer.holderDid) {
+      if (typeof req.body.transactionCode !== 'string' || !/^\d{6}$/.test(req.body.transactionCode)) {
+        throw new HttpError(400, 'Bitte gib den sechsstelligen Ausgabecode vom Issuer auf deinem Notebook ein.');
+      }
+      if (!matchesSecret(req.body.transactionCode, offer.transactionCode)) {
+        offer.codeAttempts++;
+        if (offer.codeAttempts >= 5) {
+          offer.status = 'cancelled';
+          offer.cancellationReason = 'Zu viele falsche Ausgabecodes. Bitte erstelle auf dem Notebook ein neues Angebot.';
+          throw new HttpError(429, offer.cancellationReason);
+        }
+        throw new HttpError(400, `Der Ausgabecode ist falsch. Bitte prüfe den Code auf deinem Notebook. Noch ${5 - offer.codeAttempts} Versuch(e).`);
+      }
       offer.holderDid = holder.did;
       offer.holderJwk = holder.jwk;
-      offer.pairingCode = String(randomInt(1000000)).padStart(6, '0');
       offer.status = 'bound';
     }
     res.json(offerMetadata(offer));
@@ -371,6 +430,8 @@ export async function createIssuerApp({
     if (holder.did !== offer.holderDid || !['issued', 'accepted'].includes(offer.status)) {
       throw new HttpError(409, 'Der Ausweis ist für diese Wallet noch nicht zur Abholung freigegeben.');
     }
+    const record = credentials.get(await sd.sha256b64(sd.parseSdJwt(offer.sdjwt).jwt));
+    if (!record || record.revokedAt) throw new HttpError(410, 'Dieser Ausweis wurde widerrufen oder sein Status ist nicht mehr verfügbar.');
     res.json({ sdjwt: offer.sdjwt, issuerName: offer.issuerName, issuerDid: offer.issuerDid });
   }));
   app.post('/api/offers/:id/ack', wrap(async (req, res) => {
@@ -388,14 +449,18 @@ export async function createIssuerApp({
     res.sendFile(path.join(publicDirectory, 'issuer.html'));
   });
   for (const file of ['issuer.js', 'issuer.css', 'styles.css', 'lib/ui.js', 'lib/management.js', 'lib/texts.js',
-    'lib/sdjwt.js', 'lib/protocol.js']) {
-    app.get(`/${file}`, (req, res) => res.sendFile(path.join(publicDirectory, ...file.split('/'))));
+    'lib/sdjwt.js', 'lib/protocol.js', 'lib/credential-status.js']) {
+    app.get(`/${file}`, (req, res) => {
+      res.set('Cache-Control', 'no-cache');
+      res.sendFile(path.join(publicDirectory, ...file.split('/')));
+    });
   }
   app.use((req, res) => res.status(404).json({ error: 'Diese Seite oder API gibt es auf der Ausweisstelle nicht.' }));
   app.use((error, req, res, next) => {
     if (res.headersSent) return next(error);
     const code = error instanceof HttpError ? error.status : error.type === 'entity.too.large' ? 413
       : error instanceof SyntaxError && 'body' in error ? 400 : 500;
+    if (code === 500) console.error('Issuer-Serverfehler:', error);
     res.status(code).json({ error: code === 500
       ? 'Die Ausweisstelle konnte die Anfrage nicht verarbeiten. Bitte versuche es erneut.'
       : code === 413 ? 'Die Anfrage ist zu groß.'

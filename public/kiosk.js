@@ -5,8 +5,57 @@ let creating = false;
 let config;
 let stopped = false;
 let lastAttendees;
-let lastDashboard;
+let lastAttempts;
 let lastAttempt;
+const issuerViews = new Map();
+
+function filterIssuers() {
+  const query = document.getElementById('issuer-search').value.trim().toLocaleLowerCase('de');
+  let visible = false;
+  for (const view of issuerViews.values()) {
+    view.node.hidden = !view.search.includes(query);
+    visible ||= !view.node.hidden;
+  }
+  document.getElementById('issuer-empty').hidden = issuerViews.size !== 0;
+  document.getElementById('issuer-no-match').hidden = visible || issuerViews.size === 0;
+}
+
+function updateIssuers(issuers) {
+  const list = document.getElementById('progress-list');
+  const present = new Set(issuers.map((issuer) => issuer.did));
+  for (const [did, view] of issuerViews) {
+    if (!present.has(did)) {
+      view.node.remove();
+      issuerViews.delete(did);
+    }
+  }
+  for (const issuer of issuers) {
+    let view = issuerViews.get(issuer.did);
+    if (!view) {
+      const name = el('strong');
+      const label = el('span', { class: 'muted' });
+      const status = el('span');
+      const checkins = el('span', { class: 'issuer-checkins' });
+      const node = el('li', {}, name, label, el('div', { class: 'issuer-status' }, status, checkins));
+      view = { node, name, label, status, checkins };
+      issuerViews.set(issuer.did, view);
+      list.prepend(node);
+    }
+    const signature = JSON.stringify(issuer);
+    if (signature === view.signature) continue;
+    view.signature = signature;
+    const trusted = issuer.trusted && issuer.proofVerified && issuer.ownerName;
+    view.name.textContent = issuer.ownerName || issuer.employeeName || issuer.name;
+    view.label.textContent = issuer.name;
+    view.status.className = `badge ${trusted ? '' : 'badge-warn'}`;
+    view.status.textContent = trusted ? 'Issuer vertrauenswürdig' : issuer.proofVerified
+      ? 'Registriert · nicht vertraut' : 'Registriert · Schlüsselbeweis fehlt';
+    view.checkins.textContent = `${issuer.checkinCount} erfolgreiche Check-in(s)`;
+    view.search = [issuer.name, issuer.ownerName, issuer.employeeName, issuer.did, issuer.fingerprint]
+      .filter(Boolean).join(' ').toLocaleLowerCase('de');
+  }
+  filterIssuers();
+}
 
 async function newQr() {
   if (creating) return;
@@ -27,7 +76,6 @@ async function newQr() {
 
 async function attendees() {
   const people = await api('/attendees');
-  document.getElementById('attendee-count').textContent = people.length;
   const serialized = JSON.stringify(people);
   if (serialized === lastAttendees) return;
   const list = document.getElementById('attendees');
@@ -44,7 +92,7 @@ async function attendees() {
         person.checkins?.length ? [...person.checkins].reverse().map((checkin) => el('article', { class: 'checkin-record' },
           el('h3', {}, `Mitarbeiterausweis · ${formatTime(checkin.time)}`),
           el('p', {}, `Aussteller: ${checkin.issuerName}`),
-          el('p', { class: 'muted' }, `Freigegebener Issuer von ${checkin.issuerOwner}`),
+          el('p', { class: 'muted' }, `Beim Check-in vertrauter Issuer von ${checkin.issuerOwner}`),
           attributes(checkin.claims),
           el('p', { class: 'muted' }, `Nicht geteilt: ${['organisation', 'role'].filter((field) => !Object.hasOwn(checkin.claims, field)).map((field) => labels[field]).join(', ') || 'keine optionalen Felder'}`),
           el('p', { class: 'did' }, `Credential-ID: ${checkin.credentialId.slice(0, 16)}…`),
@@ -76,27 +124,17 @@ function showAttempt(attempt) {
 
 async function dashboard() {
   const data = await api('/dashboard');
-  const serialized = JSON.stringify(data);
-  if (serialized === lastDashboard) return;
-  lastDashboard = serialized;
-  document.getElementById('progress-stats').replaceChildren(
-    ...[[data.stats.registered, 'registriert'], [data.stats.trusted, 'freigegeben'], [data.stats.checkedIn, 'mit Check-in']]
-      .map(([count, label]) => el('div', {}, el('strong', {}, count), el('span', {}, label))),
-  );
-  document.getElementById('progress-list').replaceChildren(...data.issuers.length
-    ? [...data.issuers].reverse().map((issuer) => el('li', {},
-      el('strong', {}, issuer.ownerName || issuer.employeeName || issuer.name),
-      el('span', { class: 'muted' }, issuer.name),
-      el('ul', { class: 'progress-steps' },
-        el('li', { class: issuer.proofVerified ? 'complete' : '' }, issuer.proofVerified ? 'Registriert' : 'Neu registrieren'),
-        el('li', { class: issuer.trusted && issuer.proofVerified && issuer.ownerName ? 'complete' : '' },
-          issuer.trusted && issuer.proofVerified && issuer.ownerName ? 'Freigegeben' : 'Freigabe ausstehend'),
-        el('li', { class: issuer.checkinCount ? 'complete' : '' }, issuer.checkinCount ? `${issuer.checkinCount} Check-in(s)` : 'Noch kein Check-in'))))
-    : [el('li', { class: 'muted' }, 'Noch kein Issuer registriert.')]);
+  for (const [id, value] of [['registered-count', data.stats.registered], ['checkin-count', data.stats.checkins]]) {
+    const node = document.getElementById(id);
+    if (node.textContent !== String(value)) node.textContent = value;
+  }
+  updateIssuers(data.issuers);
+  const serialized = JSON.stringify(data.attempts);
+  if (serialized === lastAttempts) return;
+  lastAttempts = serialized;
 
   const list = document.getElementById('attempts');
   const opened = new Set([...list.querySelectorAll('details[open]')].map((node) => node.dataset.entry));
-  document.getElementById('attempt-count').textContent = data.attempts.length;
   list.replaceChildren(...data.attempts.length ? data.attempts.map((attempt) => {
     const done = attempt.status === 'done';
     const detail = el('details', { 'data-entry': attempt.id, class: `attempt-detail ${attempt.status}` },
@@ -154,6 +192,7 @@ async function poll() {
   }
 }
 
+document.getElementById('issuer-search').addEventListener('input', filterIssuers);
 window.addEventListener('pagehide', () => {
   stopped = true;
 });

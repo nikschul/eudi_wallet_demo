@@ -68,7 +68,7 @@ export async function verifyJwt(jwt, publicJwk) {
 
 // ---------- SD-JWT VC ----------
 // claims: flat object, e.g. { given_name: 'Erika', family_name: 'Mustermann' }
-export async function issueSdJwt({ issuerDid, issuerPrivateJwk, holderPublicJwk, vct, claims, validDays = 1 }) {
+export async function issueSdJwt({ issuerDid, issuerPrivateJwk, holderPublicJwk, vct, claims, validDays = 1, status }) {
   const disclosures = [];
   const digests = [];
   for (const [name, value] of Object.entries(claims)) {
@@ -85,6 +85,7 @@ export async function issueSdJwt({ issuerDid, issuerPrivateJwk, holderPublicJwk,
     cnf: { jwk: publicPart(holderPublicJwk) },
     _sd: digests.sort(),
     _sd_alg: 'sha-256',
+    ...(status ? { status } : {}),
   };
   const jwt = await signJwt({ alg: 'ES256', typ: 'dc+sd-jwt', kid: issuerDid + '#0' }, payload, issuerPrivateJwk);
   return jwt + '~' + disclosures.join('~') + '~';

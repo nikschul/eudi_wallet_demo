@@ -63,3 +63,20 @@ test('Purge removes only demo files and works repeatedly', async (t) => {
   assert.deepEqual(createStore(target).listAttendees(), []);
   assert.equal(await readFile(path.join(target, 'unrelated.txt'), 'utf8'), 'keep');
 });
+
+test('Issuer purge resets identity and credential status together without deleting workshop or unrelated data', async (t) => {
+  const target = await directory(t);
+  for (const name of ['identity.json', 'credentials.json', 'attendees.json', 'unrelated.txt']) {
+    await writeFile(path.join(target, name), 'keep');
+  }
+  const purge = fileURLToPath(new URL('../server/purge.js', import.meta.url));
+  for (let index = 0; index < 2; index++) {
+    execFileSync(process.execPath, [purge], { env: { ...process.env, APP_ROLE: 'issuer', DATA_DIR: target } });
+  }
+  for (const name of ['identity.json', 'credentials.json']) {
+    await assert.rejects(readFile(path.join(target, name)), { code: 'ENOENT' });
+  }
+  for (const name of ['attendees.json', 'unrelated.txt']) {
+    assert.equal(await readFile(path.join(target, name), 'utf8'), 'keep');
+  }
+});

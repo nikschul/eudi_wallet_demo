@@ -26,17 +26,35 @@
       <ol class="guided-list">
         <li><strong>Anmelden:</strong> Mitarbeitende hosten ihren eigenen Issuer und beweisen den Besitz des Ausstellerschlüssels.</li>
         <li><strong>Zuordnen:</strong> Vergleiche den Fingerabdruck mit dem Bildschirm der Person und trage ihren Namen ein. Ein selbst gewählter Issuer-Name beweist keine Identität.</li>
-        <li><strong>Bewusst vertrauen:</strong> Erteile die Freigabe. Der Empfang akzeptiert nur diesen konkreten Schlüssel, keine beliebige Cloudflare-Domain.</li>
-        <li><strong>Freigabe prüfen:</strong> Erst mit nicht freigegebenem Issuer einchecken lassen, dann freigeben. Beim erneuten Scan des Kiosk-QR funktioniert derselbe Ausweis.</li>
+        <li><strong>Issuer im Setup als vertrauenswürdig kennzeichnen:</strong> Der Empfang akzeptiert diesen konkreten Schlüssel, keine beliebige Cloudflare-Domain.</li>
+        <li><strong>Danach ausstellen und einchecken:</strong> Die ausstellende Person erstellt selbstständig Ausweise. Einzelne Credentials werden hier weder registriert noch freigegeben; beim Vorzeigen prüft der Empfang seine aktuelle Vertrauensregel.</li>
       </ol>
-      <p id="trust-summary" class="message notice" role="status"></p>
+      <div class="progress-stats" aria-live="polite">
+        <div><strong id="registered-count">–</strong><span>Registrierte Issuer</span></div>
+        <div><strong id="checkin-count">–</strong><span>Erfolgreiche Check-ins</span></div>
+      </div>
       <div data-explain="trust"></div>
     </section>
     <section class="card">
       <div class="card-top"><h2>Registrierte Issuer</h2><button id="refresh" type="button" class="secondary">Aktualisieren</button></div>
-      <p>Registrierung und Schlüsselbeweis sind technisch geprüft. Die Zuordnung zu einem Mitarbeitenden bestätigst du als Moderation.</p>
-      <div id="issuers" class="stack"></div>
+      <p>Registrierung allein bedeutet kein Vertrauen. Klappe einen Issuer auf, prüfe seinen Schlüsselbeweis und bestätige die Zuordnung zur Person. Einzelne Ausweise werden hier nicht freigegeben.</p>
+      <div class="issuer-tools">
+        <label class="field grow" for="issuer-search">Issuer suchen
+          <input id="issuer-search" type="search" placeholder="Name, DID oder Fingerabdruck" autocomplete="off" aria-controls="issuers">
+        </label>
+        <label class="field" for="issuer-filter">Vertrauensstatus
+          <select id="issuer-filter" aria-controls="issuers">
+            <option value="all">Alle Zustände</option>
+            <option value="untrusted">Registriert · nicht vertraut</option>
+            <option value="trusted">Vertrauenswürdig</option>
+            <option value="unverified">Schlüsselbeweis fehlt</option>
+          </select>
+        </label>
+      </div>
+      <p class="muted list-hint">Neue Registrierungen erscheinen oben. Suche und Filter bleiben beim Aktualisieren erhalten, ebenso Eingaben und geöffnete Details.</p>
+      <div id="issuers" class="issuer-directory" role="region" aria-label="Registrierte Issuer" tabindex="0"></div>
       <p id="empty" class="muted" hidden>Noch keine Issuer registriert.</p>
+      <p id="issuer-no-match" class="muted" hidden>Keine passenden Issuer. Suche oder Filter ändern.</p>
     </section>
     <section class="card">
       <h2>Replay-Schutz testen</h2>

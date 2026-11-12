@@ -15,6 +15,21 @@ export function publicOrigin(value, label = 'Adresse') {
   return url.origin;
 }
 
+export function canonicalWalletUrl(workshopUrl, currentUrl = new URL(location.href)) {
+  const url = new URL('/wallet.html', publicOrigin(workshopUrl, 'Workshop-Adresse'));
+  url.search = currentUrl.search;
+  url.hash = currentUrl.hash;
+  return url;
+}
+
+export function offerTransactionCode(offer) {
+  if (offer.status !== 'offered') return null;
+  if (typeof offer.transactionCode !== 'string' || !/^\d{6}$/.test(offer.transactionCode)) {
+    throw new Error('Der Issuer hat keinen gültigen Ausgabecode geliefert. Bitte aktualisiere den Issuer-Server und die Seite gemeinsam und erstelle ein neues Angebot.');
+  }
+  return offer.transactionCode;
+}
+
 export async function validatePublicJwk(jwk) {
   if (!jwk || Object.keys(jwk).sort().join(',') !== 'crv,kty,x,y'
     || jwk.kty !== 'EC' || jwk.crv !== 'P-256') {

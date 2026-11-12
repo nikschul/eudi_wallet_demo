@@ -1,5 +1,6 @@
 FROM node:24-alpine AS verified
 WORKDIR /app
+RUN apk add --no-cache bash
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 COPY scripts ./scripts

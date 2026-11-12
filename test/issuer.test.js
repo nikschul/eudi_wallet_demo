@@ -3,13 +3,14 @@ import assert from 'node:assert/strict';
 import express from 'express';
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, rm, stat } from 'node:fs/promises';
+import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { createIssuerApp } from '../server/issuer-app.js';
 import * as sd from '../public/lib/sdjwt.js';
 import {
   EMPLOYEE_VCT, HOLDER_PROOF, REGISTRATION_PROOF, decodeOffer, signProof, verifyProof,
 } from '../public/lib/protocol.js';
+import { verifyStatusList, isRevoked } from '../public/lib/credential-status.js';
 
 const claims = { given_name: 'Erika', family_name: 'Muster', organisation: 'Workshop GmbH', role: 'Mitarbeitende' };
 
@@ -72,7 +73,7 @@ async function fixture(t) {
       state.lastRegistration = payload;
       const record = {
         did: payload.iss, name: payload.name, employeeName: payload.employeeName,
-        publicUrl: payload.publicUrl, trusted: false, ownerName: null,
+        publicUrl: payload.publicUrl, trusted: false, proofVerified: true, ownerName: null,
         fingerprint: '12:34:56:78', createdAt: new Date().toISOString(),
         privateJwk: { d: 'must-never-be-forwarded' },
       };
@@ -106,6 +107,9 @@ async function fixture(t) {
   async function ready() {
     assert.equal((await setup()).status, 200);
     assert.equal((await register()).status, 200);
+    const record = [...registry.values()][0];
+    record.trusted = true;
+    record.ownerName = 'Anna Ausstellung';
   }
   async function offer() {
     const response = await admin('/offers', { body: { claims } });
@@ -169,6 +173,10 @@ test('Issuer-Konfiguration, geschützte Demo-Verwaltung und getrennte Seiten ohn
   }
   const script = await f.call('/issuer.js');
   assert.equal(script.status, 200);
+  assert.equal(script.headers.get('cache-control'), 'no-cache');
+  for (const route of ['/issuer.css', '/lib/ui.js', '/lib/protocol.js']) {
+    assert.equal((await f.call(route)).headers.get('cache-control'), 'no-cache');
+  }
   assert.doesNotMatch(script.data, /localStorage|sessionStorage|setupPage|readStored|writeStored|X-Admin-Token|showLogin|Verwaltung sperren/);
   assert.doesNotMatch(script.data, /Getrennte Systeme, klarer Weg/);
   assert.match(script.data, /sha256b64\(status\.did\)/);
@@ -221,6 +229,9 @@ test('Registrierung beweist Issuer-Schlüsselbesitz, Trust ist ausschließlich r
   const did = registration.data.did;
   const record = f.registry.get(did);
   assert.equal((await f.admin('/trust')).data.trusted, false);
+  const blocked = await f.admin('/offers', { body: { claims } });
+  assert.equal(blocked.status, 409);
+  assert.match(blocked.data.error, /Setup.*vertrauenswürdig/);
   record.trusted = true;
   record.ownerName = 'Empfang';
   const trusted = await f.admin('/trust');
@@ -236,6 +247,8 @@ test('Registrierung beweist Issuer-Schlüsselbesitz, Trust ist ausschließlich r
   assert.equal((await f.admin('/offers', { body: { claims } })).status, 409);
   await f.register();
   assert.equal((await f.admin('/trust')).data.trusted, false);
+  assert.equal((await f.admin('/offers', { body: { claims } })).status, 409);
+  Object.assign(f.registry.get(did), { trusted: true, ownerName: 'Andere Person' });
   assert.equal((await f.offer()).status, 'offered');
 });
 
@@ -279,6 +292,10 @@ test('Angebote validieren Pflichtattribute, bleiben unsigniert und tragen nur ei
   assert.equal(Buffer.from(decoded.token, 'base64url').length, 32);
   assert.equal(offer.holderDid, null);
   assert.equal(offer.status, 'offered');
+  assert.match(offer.transactionCode, /^\d{6}$/);
+  for (let poll = 0; poll < 3; poll++) {
+    assert.equal((await f.admin(`/offers/${offer.id}`)).data.transactionCode, offer.transactionCode);
+  }
   const capability = { ...offer, token: decoded.token };
   const publicInfo = await f.wallet(capability);
   assert.equal(publicInfo.status, 200);
@@ -287,7 +304,9 @@ test('Angebote validieren Pflichtattribute, bleiben unsigniert und tragen nur ei
   assert.equal(publicInfo.data.aud, f.issuerUrl);
   assert.ok(Date.parse(publicInfo.data.expiresAt) > Date.now());
   noKeys(publicInfo.data);
-  assert.equal((await f.admin(`/offers/${offer.id}/approve`, { body: { pairingCode: '000000' } })).status, 409);
+  assert.equal(publicInfo.data.transactionCode, undefined);
+  assert.equal(decoded.transactionCode, undefined);
+  assert.equal((await f.admin(`/offers/${offer.id}/approve`, { body: {} })).status, 409);
   assert.equal((await f.wallet(capability)).data.status, 'offered');
 });
 
@@ -352,14 +371,16 @@ test('Gleichzeitige Wallet-Claims binden atomisch nur einen Holder und sind für
   const offer = await f.offer();
   const holders = await Promise.all([sd.generateKeyPair(), sd.generateKeyPair()]);
   const proofs = await Promise.all(holders.map((holder) => f.proof(offer, holder)));
-  const results = await Promise.all(proofs.map((proof) => f.wallet(offer, '/claim', { body: { proof } })));
+  const results = await Promise.all(proofs.map((proof) => f.wallet(offer, '/claim', {
+    body: { proof, transactionCode: offer.transactionCode },
+  })));
   assert.deepEqual(results.map((result) => result.status).sort(), [200, 409]);
   const winner = results.findIndex((result) => result.status === 200);
   const bound = results[winner].data;
   assert.equal(bound.status, 'bound');
-  assert.match(bound.pairingCode, /^\d{6}$/);
+  assert.equal(bound.transactionCode, undefined);
   const repeated = await Promise.all([1, 2, 3].map(() => f.wallet(offer, '/claim', { body: { proof: proofs[winner] } })));
-  assert.ok(repeated.every((result) => result.status === 200 && result.data.pairingCode === bound.pairingCode));
+  assert.ok(repeated.every((result) => result.status === 200 && result.data.transactionCode === undefined));
   const management = await f.admin(`/offers/${offer.id}`);
   assert.equal(management.data.holderDid, holders[winner].did);
   noKeys(management.data);
@@ -367,7 +388,7 @@ test('Gleichzeitige Wallet-Claims binden atomisch nur einen Holder und sind für
   assert.equal((await f.wallet(offer, '/ack', { body: { proof: proofs[winner] } })).status, 409);
 });
 
-test('Freigabe signiert exakt einmal für den Holder; Abholung, Claim und Ack sind wiederholbar', async (t) => {
+test('Ausgabecode bindet die Wallet; bewusste Signatur, Abholung, Claim und Ack sind wiederholbar', async (t) => {
   const f = await fixture(t);
   await f.ready();
   const offer = await f.offer();
@@ -375,12 +396,16 @@ test('Freigabe signiert exakt einmal für den Holder; Abholung, Claim und Ack si
   const other = await sd.generateKeyPair();
   const proof = await f.proof(offer, holder);
   const otherProof = await f.proof(offer, other);
-  const bound = await f.wallet(offer, '/claim', { body: { proof } });
-  const wrongCode = bound.data.pairingCode === '000000' ? '111111' : '000000';
-  assert.equal((await f.admin(`/offers/${offer.id}/approve`, { body: { pairingCode: wrongCode } })).status, 400);
+  const wrongCode = offer.transactionCode === '000000' ? '111111' : '000000';
+  const wrong = await f.wallet(offer, '/claim', { body: { proof, transactionCode: wrongCode } });
+  assert.equal(wrong.status, 400);
+  assert.match(wrong.data.error, /Ausgabecode ist falsch/);
+  assert.equal((await f.wallet(offer)).data.status, 'offered');
+  const bound = await f.wallet(offer, '/claim', { body: { proof, transactionCode: offer.transactionCode } });
+  assert.equal(bound.status, 200);
   assert.equal((await f.wallet(offer)).data.status, 'bound');
   const approvals = await Promise.all([1, 2, 3].map(() => f.admin(`/offers/${offer.id}/approve`, {
-    body: { pairingCode: bound.data.pairingCode },
+    body: {},
   })));
   assert.deepEqual(approvals.map((response) => response.status).sort(), [200, 409, 409]);
   approvals.forEach((response) => noKeys(response.data));
@@ -406,22 +431,22 @@ test('Freigabe signiert exakt einmal für den Holder; Abholung, Claim und Ack si
   assert.equal((await f.wallet(offer, '/claim', { body: { proof } })).data.status, 'accepted');
   assert.equal((await f.wallet(offer, '/credential', { body: { proof } })).data.sdjwt, delivery.data.sdjwt);
   assert.equal((await f.admin(`/offers/${offer.id}/approve`, {
-    body: { pairingCode: bound.data.pairingCode },
+    body: {},
   })).status, 409);
   assert.equal((await f.admin(`/offers/${offer.id}/cancel`, { body: {} })).status, 409);
   noKeys((await f.wallet(offer)).data);
   noKeys((await f.admin(`/offers/${offer.id}`)).data);
 });
 
-test('Gleichzeitige Claims und Freigabe setzen einen signierten Zustand nicht zurück', async (t) => {
+test('Gleichzeitige Claims und Signatur setzen einen signierten Zustand nicht zurück', async (t) => {
   const f = await fixture(t);
   await f.ready();
   const offer = await f.offer();
   const holder = await sd.generateKeyPair();
   const proof = await f.proof(offer, holder);
-  const bound = await f.wallet(offer, '/claim', { body: { proof } });
+  await f.wallet(offer, '/claim', { body: { proof, transactionCode: offer.transactionCode } });
   const responses = await Promise.all([
-    f.admin(`/offers/${offer.id}/approve`, { body: { pairingCode: bound.data.pairingCode } }),
+    f.admin(`/offers/${offer.id}/approve`, { body: {} }),
     f.wallet(offer, '/claim', { body: { proof } }),
     f.wallet(offer, '/claim', { body: { proof } }),
   ]);
@@ -454,7 +479,53 @@ test('Abbruch ist vor der Signatur möglich und beendet den öffentlichen Zugrif
   assert.equal((await f.admin(`/offers/${offer.id}/cancel`, { body: {} })).data.status, 'cancelled');
   assert.equal((await f.wallet(offer)).status, 410);
   assert.equal((await f.admin(`/offers/${offer.id}`)).data.status, 'cancelled');
-  assert.equal((await f.admin(`/offers/${offer.id}/approve`, { body: { pairingCode: '000000' } })).status, 410);
+  assert.equal((await f.admin(`/offers/${offer.id}/approve`, { body: {} })).status, 410);
+});
+
+test('Ausgabecodes fehlen im öffentlichen Angebot, Fehlversuche binden keine Wallet und sperren nach fünf Versuchen', async (t) => {
+  const f = await fixture(t);
+  await f.ready();
+  const offer = await f.offer();
+  const holder = await sd.generateKeyPair();
+  const proof = await f.proof(offer, holder);
+  for (const transactionCode of [undefined, '', '12', 'abcdef']) {
+    const result = await f.wallet(offer, '/claim', { body: { proof, transactionCode } });
+    assert.equal(result.status, 400);
+    assert.match(result.data.error, /sechsstelligen Ausgabecode/);
+  }
+  const wrongCode = offer.transactionCode === '000000' ? '111111' : '000000';
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    const response = await f.wallet(offer, '/claim', { body: { proof, transactionCode: wrongCode } });
+    assert.equal(response.status, attempt === 5 ? 429 : 400);
+    assert.match(response.data.error, attempt === 5 ? /neues Angebot/ : /Ausgabecode ist falsch/);
+    const management = (await f.admin(`/offers/${offer.id}`)).data;
+    assert.equal(management.holderDid, null);
+    assert.equal(management.status, attempt === 5 ? 'cancelled' : 'offered');
+    assert.equal(management.sdjwt, undefined);
+  }
+  assert.equal((await f.wallet(offer, '/claim', { body: { proof, transactionCode: offer.transactionCode } })).status, 410);
+  const replacement = await f.offer();
+  assert.equal((await f.wallet(replacement, '/claim', { body: {
+    proof: await f.proof(replacement, holder), transactionCode: replacement.transactionCode,
+  } })).status, 200);
+});
+
+test('Entzogenes Issuer-Vertrauen verhindert auch die Signatur eines zuvor erstellten Angebots', async (t) => {
+  const f = await fixture(t);
+  await f.ready();
+  const offer = await f.offer();
+  const holder = await sd.generateKeyPair();
+  await f.wallet(offer, '/claim', { body: {
+    proof: await f.proof(offer, holder), transactionCode: offer.transactionCode,
+  } });
+  const record = f.registry.get(offer.issuerDid);
+  record.trusted = false;
+  const denied = await f.admin(`/offers/${offer.id}/approve`, { body: {} });
+  assert.equal(denied.status, 409);
+  assert.match(denied.data.error, /Setup/);
+  assert.equal((await f.wallet(offer)).data.status, 'bound');
+  record.trusted = true;
+  assert.equal((await f.admin(`/offers/${offer.id}/approve`, { body: {} })).status, 200);
 });
 
 test('Öffentliche Origins erfordern HTTPS außer Loopback und strikt getrennte Issuer-/Workshop-Adressen', async () => {
@@ -467,4 +538,88 @@ test('Öffentliche Origins erfordern HTTPS außer Loopback und strikt getrennte 
   ]) {
     await assert.rejects(createIssuerApp({ ...base, ...patch }));
   }
+});
+
+async function issuedCredential(f) {
+  const offer = await f.offer();
+  const holder = await sd.generateKeyPair();
+  assert.equal((await f.wallet(offer, '/claim', { body: {
+    proof: await f.proof(offer, holder), transactionCode: offer.transactionCode,
+  } })).status, 200);
+  assert.equal((await f.admin(`/offers/${offer.id}/approve`, { body: {} })).status, 200);
+  const received = await f.wallet(offer, '/credential', { body: { proof: await f.proof(offer, holder) } });
+  assert.equal(received.status, 200);
+  return { offer, holder, sdjwt: received.data.sdjwt };
+}
+
+test('Ausgestellte Credentials und unumkehrbarer Widerruf sind dauerhaft; öffentliche Listen enthalten keine Personendaten', async (t) => {
+  const f = await fixture(t);
+  await f.ready();
+  assert.deepEqual((await f.admin('/credentials')).data, []);
+  const issued = await issuedCredential(f);
+  const records = (await f.admin('/credentials')).data;
+  assert.equal(records.length, 1);
+  const record = records[0];
+  assert.equal(record.id, await sd.sha256b64(sd.parseSdJwt(issued.sdjwt).jwt));
+  assert.equal(record.holderDid, issued.holder.did);
+  assert.equal(record.revokedAt, null);
+  assert.deepEqual(record.claims, claims);
+  noKeys(records);
+  const reference = sd.describeCredential(issued.sdjwt).payload.status.status_list;
+  assert.equal(reference.idx, record.statusIndex);
+  assert.equal(reference.uri, `${f.issuerUrl}/api/status-list`);
+  const readList = async () => {
+    const response = await f.call('/api/status-list', { headers: { Origin: f.workshopUrl } });
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('content-type'), /application\/statuslist\+jwt/);
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    assert.equal(response.headers.get('access-control-allow-origin'), f.workshopUrl);
+    const payload = sd.decodeJwt(response.data).payload;
+    for (const hidden of ['claims', 'holderDid', 'given_name', 'family_name', record.id]) {
+      assert.equal(JSON.stringify(payload).includes(hidden), false);
+    }
+    return verifyStatusList(response.data, { issuerDid: record.issuerDid, uri: reference.uri });
+  };
+  assert.equal(isRevoked(await readList(), record.statusIndex), false);
+  const revoked = await f.admin(`/credentials/${record.id}/revoke`, { body: {} });
+  assert.equal(revoked.status, 200);
+  assert.ok(revoked.data.revokedAt);
+  assert.equal(isRevoked(await readList(), record.statusIndex), true);
+  f.advance(10);
+  const repeated = await f.admin(`/credentials/${record.id}/revoke`, { body: {} });
+  assert.equal(repeated.data.revokedAt, revoked.data.revokedAt);
+  assert.equal((await f.admin(`/credentials/${record.id}/revoke`, { body: { revoked: false } })).status, 400);
+  assert.equal((await f.admin(`/credentials/${'x'.repeat(43)}/revoke`, { body: {} })).status, 404);
+  assert.equal((await f.wallet(issued.offer, '/credential', {
+    body: { proof: await f.proof(issued.offer, issued.holder) },
+  })).status, 410);
+  const restart = await createIssuerApp(f.options);
+  const restarted = await listen(restart.app);
+  t.after(() => close(restarted.server));
+  const loaded = await request(restarted.url, '/api/issuer/credentials', {
+    headers: { 'X-Admin-Token': restart.adminToken },
+  });
+  assert.deepEqual(loaded.data, [revoked.data]);
+  const signedList = (await request(restarted.url, '/api/status-list')).data;
+  assert.equal(isRevoked(await verifyStatusList(signedList, {
+    issuerDid: record.issuerDid, uri: reference.uri,
+  }), record.statusIndex), true);
+  if (process.platform !== 'win32') {
+    assert.equal((await stat(path.join(f.dataDirectory, 'credentials.json'))).mode & 0o777, 0o600);
+  }
+});
+
+test('Parallele Ausstellungen erhalten eigene Statusindizes; beschädigte oder verlorene Widerrufsdaten verhindern den Neustart', async (t) => {
+  const f = await fixture(t);
+  await f.ready();
+  await Promise.all([issuedCredential(f), issuedCredential(f), issuedCredential(f)]);
+  const records = (await f.admin('/credentials')).data;
+  assert.equal(records.length, 3);
+  assert.equal(new Set(records.map((record) => record.id)).size, 3);
+  assert.equal(new Set(records.map((record) => record.statusIndex)).size, 3);
+  const file = path.join(f.dataDirectory, 'credentials.json');
+  await writeFile(file, 'broken');
+  await assert.rejects(createIssuerApp(f.options), /Credentials.*nicht sicher geladen/);
+  await rm(file);
+  await assert.rejects(createIssuerApp(f.options), /Credentials.*nicht sicher geladen/);
 });

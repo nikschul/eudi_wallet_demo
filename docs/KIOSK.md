@@ -45,8 +45,15 @@ für die ganze Runde. Ein neuer Tunnel-Origin hat einen anderen Browser-Speicher
 ## 3. Gemeinsam moderieren
 
 - <http://localhost:3000/kiosk.html> auf TV/Beamer öffnen.
-  Das Dashboard zeigt live registrierte Issuer, Freigaben, Check-in-Fortschritt
-  und persönliche Versuche mit Fehlern und Prüfschritten.
+  Das Dashboard zeigt genau zwei Gesamtkennzahlen: **registrierte Issuer** und
+  **erfolgreiche Check-ins** (alle gespeicherten erfolgreichen Vorgänge, nicht die
+  Anzahl der Personen oder Issuer mit Check-in). Wiederholte erfolgreiche
+  Check-ins derselben Person zählen jeweils einzeln; abgelehnte Versuche zählen
+  nicht mit. Daneben bleiben persönliche Versuche mit Fehlern und Prüfschritten
+  sowie die eingecheckten Personen sichtbar.
+  Pro Issuer zeigt die Liste seinen aktuellen Vertrauensstatus und seine
+  erfolgreichen Check-ins. Registrierung allein ist kein Vertrauen; ein fehlender
+  Schlüsselbeweis wird gesondert angezeigt.
 - Den privaten lokalen Freischalt-Link aus dem **neuesten Startblock** öffnen:
 
   ```bash
@@ -61,22 +68,41 @@ für die ganze Runde. Ein neuer Tunnel-Origin hat einen anderen Browser-Speicher
   und die Logs nicht auf dem TV zeigen.
 
   Den Fingerprint einer registrierten Ausweisstelle mit dem Notebook der Person
-  vergleichen, ihren Demo-Namen zuordnen und bewusst freigeben.
+  vergleichen, ihren Demo-Namen zuordnen und **den Issuer im Setup als
+  vertrauenswürdig kennzeichnen**. Erst danach wird am Issuer die Erstellung
+  von Ausstellungsangeboten möglich.
+- Viele Issuer bleiben in beiden Ansichten in einer begrenzten, scrollbar
+  bedienbaren Liste übersichtlich. Suche nach Name, DID oder Fingerabdruck;
+  in der Verwaltung lässt sich zusätzlich nach Vertrauensstatus filtern.
+  Neue Registrierungen stehen oben. In der Verwaltung einen Eintrag aufklappen,
+  um Fingerabdruck, Zuordnung und Vertrauensaktionen zu sehen. Geöffnete Details,
+  ungespeicherte Eingaben, Suche und Filter bleiben bei Live-Updates erhalten.
+  Der Kiosk aktualisiert etwa alle zwei Sekunden, die Verwaltung alle fünf
+  Sekunden; „Aktualisieren“ lädt die Verwaltung sofort neu. Auch ein
+  Vertrauensentzug wird live angezeigt. Historische erfolgreiche Check-ins
+  bleiben dabei erhalten; „Check-in-Liste leeren“ setzt deren Gesamtzahl zurück.
 - Der gemeinsame Empfangs-QR kann gleichzeitig von mehreren Smartphones
   gescannt werden. Jeder Scan erzeugt eine eigene einmalige Check-in-Anfrage;
   die persönlichen Versuche blockieren sich nicht.
 
-**Lerngeschichte:** Vor Freigabe darf der Issuer schon ausstellen, aber der
-Check-in scheitert. Nach Fingerprint-Vergleich und Freigabe mit demselben Ausweis
-erneut den gemeinsamen QR scannen. Der neue persönliche Versuch gelingt.
-Die Replay-Demo zeigt, warum eine alte Presentation nicht erneut gültig ist.
+**Lerngeschichte:** Zuerst wird Vertrauen zum **Issuer** hergestellt. Danach
+stellt er selbstständig Ausweise aus; die Moderation gibt keine einzelnen
+Credentials frei. Die Wallet entscheidet über Empfang, Speicherung und
+Datenfreigabe. Der Empfang prüft beim Vorzeigen weiterhin Signatur, Gültigkeit,
+Wallet-Bindung und seine aktuelle Vertrauensregel. Zusätzlich wird der signierte
+Credential-Status geprüft; widerrufene Ausweise werden abgelehnt. Erfolgreiche
+Check-ins zeigen im aufklappbaren Versuch alle acht Prüfschritte. Die Replay-Demo zeigt,
+warum eine alte Presentation nicht erneut gültig ist.
 
 Vor Zustimmung erklärt die Wallet die Anzeige am Kiosk. Dort erscheinen nur
-die tatsächlich geteilten Angaben, Typ, Issuer, freigegebene Person und
+die tatsächlich geteilten Angaben, Typ, Issuer, zugeordnete ausstellende Person und
 Zeitstempel – keine versteckten Disclosures oder vollständigen JWTs.
 Abgelehnte Versuche zeigen den ausdrücklich ungeprüften Namen, Versuchscode
 und genauen Fehler. Die letzten 100 Versuche bleiben bis zum Serverneustart
 oder Leeren der Liste sichtbar; erfolgreiche Check-in-Protokolle liegen im Volume.
+Die Vertrauensangaben in diesen Protokollen beschreiben den historischen
+Prüfzeitpunkt, nicht das aktuelle Issuer-Vertrauen oder den aktuellen
+Credential-Status.
 
 ## Beenden
 

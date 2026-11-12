@@ -7,6 +7,7 @@ import { createStore } from './store.js';
 import { walletIcon } from './icons.js';
 import { managementAuth } from './management-auth.js';
 import { EMPLOYEE_VCT, REGISTRATION_PROOF, publicOrigin, verifyProof, validatePublicJwk } from '../public/lib/protocol.js';
+import { statusReference, loadStatusList, isRevoked } from '../public/lib/credential-status.js';
 
 const publicDirectory = fileURLToPath(new URL('../public/', import.meta.url));
 const defaultDataDirectory = fileURLToPath(new URL('../data/', import.meta.url));
@@ -109,14 +110,16 @@ export async function createApp({
     if (request.status !== 'pending') throw new HttpError(409, 'Dieser QR-Code wird bereits geprüft oder wurde schon verwendet. Bitte scanne einen neuen Code.');
   }
 
+  function isTrustedIssuer(did) {
+    const issuer = store.getIssuer(did);
+    return issuer?.trusted === true && issuer.proofVerified === true && Boolean(issuer.ownerName);
+  }
+
   async function checkPresentation(request, presentation) {
     const result = await sd.verifyPresentation(presentation, {
       aud: request.aud,
       nonce: request.nonce,
-      isTrustedIssuer: (did) => {
-        const issuer = store.getIssuer(did);
-        return issuer?.trusted === true && issuer.proofVerified === true && Boolean(issuer.ownerName);
-      },
+      isTrustedIssuer,
     });
     if (!result.ok) {
       result.failedAt = ['Nachweis lesen', 'Issuer-Vertrauen', 'Issuer-Signatur', 'Gültigkeit',
@@ -143,9 +146,31 @@ export async function createApp({
     }
     if (result.ok) {
       const issuer = store.getIssuer(result.issuer);
+      try {
+        const { payload } = sd.decodeJwt(sd.parseSdJwt(presentation).jwt);
+        const reference = statusReference(payload, issuer.publicUrl);
+        const list = await loadStatusList(issuer, { now: clock });
+        if (isRevoked(list, reference.idx)) throw new Error('Dieser Ausweis wurde vom Issuer widerrufen.');
+        result.credentialId = await sd.sha256b64(sd.parseSdJwt(presentation).jwt);
+        if (list.expiresAt <= clock()) throw new Error('Die Statusliste ist nicht mehr aktuell.');
+        result.statusCheckedAt = new Date(clock()).toISOString();
+        result.statusListExpiresAt = new Date(list.expiresAt).toISOString();
+        result.steps.push('Widerrufsstatus geprüft: aktuelle signierte Statusliste, Ausweis nicht widerrufen');
+      } catch (error) {
+        result.ok = false;
+        result.failedAt = 'Widerrufsstatus';
+        result.error = `Widerrufsstatus nicht akzeptiert: ${error.message}`;
+      }
+    }
+    if (result.ok && !isTrustedIssuer(result.issuer)) {
+      result.ok = false;
+      result.failedAt = 'Issuer-Vertrauen';
+      result.error = 'Dem Issuer wurde während der Prüfung das Vertrauen entzogen.';
+    }
+    if (result.ok) {
+      const issuer = store.getIssuer(result.issuer);
       result.issuerName = issuer.name;
       result.issuerOwner = issuer.ownerName;
-      result.credentialId = await sd.sha256b64(sd.parseSdJwt(presentation).jwt);
     }
     return result;
   }
@@ -280,6 +305,7 @@ export async function createApp({
           issuerName: result.issuerName, issuerDid: result.issuer, issuerOwner: result.issuerOwner,
           holderDid: result.holder, credentialType: result.vct, credentialId: result.credentialId,
           trustedAtCheckin: true,
+          statusCheckedAt: result.statusCheckedAt, statusListExpiresAt: result.statusListExpiresAt,
           time: new Date(clock()).toISOString(),
         });
         lastPresentation = presentation;
@@ -304,15 +330,16 @@ export async function createApp({
 
   app.get('/api/dashboard', (req, res) => {
     const checkins = store.listAttendees().flatMap((person) => person.checkins || []);
+    const counts = new Map();
+    for (const checkin of checkins) counts.set(checkin.issuerDid, (counts.get(checkin.issuerDid) || 0) + 1);
     const issuers = store.listIssuers().map((issuer) => ({
-      ...issuer, checkinCount: checkins.filter((checkin) => checkin.issuerDid === issuer.did).length,
+      ...issuer, checkinCount: counts.get(issuer.did) || 0,
     }));
     res.json({
       issuers, attempts,
       stats: {
         registered: issuers.length,
-        trusted: issuers.filter((issuer) => issuer.trusted && issuer.proofVerified && issuer.ownerName).length,
-        checkedIn: issuers.filter((issuer) => issuer.checkinCount > 0).length,
+        checkins: checkins.length,
       },
     });
   });
@@ -373,7 +400,9 @@ export async function createApp({
   app.get('/wallet.html', (req, res) => {
     const origins = JSON.stringify(store.listIssuers().filter((issuer) => issuer.proofVerified).map((issuer) => issuer.publicUrl))
       .replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
-    res.set('Cache-Control', 'no-cache').type('html').send(walletTemplate.replace('name="issuer-origins" content="[]"', `name="issuer-origins" content="${origins}"`));
+    res.set('Cache-Control', 'no-cache').type('html').send(walletTemplate
+      .replace('name="issuer-origins" content="[]"', `name="issuer-origins" content="${origins}"`)
+      .replace('name="wallet-origin" content=""', `name="wallet-origin" content="${publicUrl}"`));
   });
   for (const [file, size] of [['icon-192.png', 192], ['icon-512.png', 512], ['apple-touch-icon.png', 180]]) {
     const icon = walletIcon(size);

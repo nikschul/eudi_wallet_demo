@@ -128,13 +128,30 @@ export function action(button, work) {
 }
 
 export function formAction(form, work) {
+  const errorBox = el('p', { class: 'message error form-error', role: 'alert', hidden: true, tabindex: '-1' });
+  form.append(errorBox);
+  form.addEventListener('invalid', (event) => {
+    errorBox.textContent = event.target.dataset?.validationMessage || event.target.validationMessage || 'Bitte prüfe deine Eingabe.';
+    errorBox.hidden = false;
+  }, true);
+  form.addEventListener('input', () => { errorBox.hidden = true; });
   form.addEventListener('submit', (event) => {
     event.preventDefault();
-    run(async () => {
+    return run(async () => {
       clearError();
+      errorBox.hidden = true;
       const button = form.querySelector('button[type="submit"]');
       button.disabled = true;
-      try { await work(new FormData(form)); } finally { button.disabled = false; }
+      try {
+        await work(new FormData(form));
+      } catch (error) {
+        errorBox.textContent = error.message || 'Die Aktion ist fehlgeschlagen. Bitte versuche es erneut.';
+        errorBox.hidden = false;
+        errorBox.focus();
+        throw error;
+      } finally {
+        button.disabled = false;
+      }
     });
   });
   return form;
@@ -182,16 +199,15 @@ export function readWalletFor(did) {
 }
 
 export function currentRequestId(url = new URL(location.href)) {
-  return url.hash.startsWith('#req=') ? url.hash.slice(5) : url.searchParams.get('req');
+  return url.hash.startsWith('#req=') ? url.hash.slice(5) : null;
 }
 
-export function updateRequestLinks() {
-  const id = currentRequestId();
+export function resetWalletNavigation() {
   for (const link of document.querySelectorAll('nav a')) {
-    if (!['/wallet.html', '/issuer.html'].includes(link.pathname)) continue;
+    if (link.pathname !== '/wallet.html') continue;
     const url = new URL(link.href);
-    if (id) url.searchParams.set('req', id);
-    else url.searchParams.delete('req');
+    url.search = '';
+    url.hash = '';
     link.href = url.href;
   }
 }
@@ -222,7 +238,7 @@ export async function setupPage() {
     pageSetup = true;
     setupBrowserFeatures();
   }
-  updateRequestLinks();
+  resetWalletNavigation();
   const config = await api('/config');
   for (const title of document.querySelectorAll('[data-event-title]')) title.textContent = config.eventTitle;
   return config;

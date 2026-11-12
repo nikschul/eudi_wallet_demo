@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as sd from '../public/lib/sdjwt.js';
-import { HOLDER_PROOF, publicOrigin, validatePublicJwk, signProof, verifyProof, decodeOffer } from '../public/lib/protocol.js';
+import { HOLDER_PROOF, publicOrigin, validatePublicJwk, signProof, verifyProof, decodeOffer, offerTransactionCode } from '../public/lib/protocol.js';
 
 test('Public origins require HTTPS except local loopback and reject path or credentials', () => {
   assert.equal(publicOrigin('https://workshop.example.org/'), 'https://workshop.example.org');
@@ -33,4 +33,16 @@ test('Offer links contain a capability but no private data and malformed links a
   assert.equal(decodeOffer('#req=other'), null);
   assert.throws(() => decodeOffer('#offer=broken'));
   assert.throws(() => decodeOffer(`#offer=${sd.jsonB64({ ...offer, token: 'short' })}`));
+});
+
+test('Issuer display requires a six-digit code for every open offer, preserving leading zeros', () => {
+  for (const transactionCode of ['000001', '123456']) {
+    assert.equal(offerTransactionCode({ status: 'offered', transactionCode }), transactionCode);
+  }
+  for (const transactionCode of [undefined, null, '', 123456, '12345', '1234567', 'abcdef']) {
+    assert.throws(() => offerTransactionCode({ status: 'offered', transactionCode }), /keinen gültigen Ausgabecode/);
+  }
+  for (const status of ['bound', 'issued', 'accepted', 'cancelled']) {
+    assert.equal(offerTransactionCode({ status }), null);
+  }
 });

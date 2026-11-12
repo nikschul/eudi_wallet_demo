@@ -4,16 +4,19 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { once } from 'node:events';
+import { createServer } from 'node:http';
+import { deflateSync } from 'node:zlib';
 import { createApp } from '../server/app.js';
 import * as sd from '../public/lib/sdjwt.js';
 import { EMPLOYEE_VCT, REGISTRATION_PROOF, signProof } from '../public/lib/protocol.js';
+import { STATUS_LIST_ENTRIES, STATUS_LIST_TTL } from '../public/lib/credential-status.js';
 
 async function fixture(t, options = {}) {
   const directory = await mkdtemp(path.join(tmpdir(), 'eudi-test-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const start = async () => {
     const { app, adminToken } = await createApp({
-      publicUrl: 'https://wallet.example.org', dataDirectory: directory, ...options,
+      publicUrl: 'http://localhost:3000', dataDirectory: directory, ...options,
     });
     const server = app.listen(0, '127.0.0.1');
     await once(server, 'listening');
@@ -42,11 +45,31 @@ async function register(api, issuer, updates = {}) {
   return api('/issuers', { challengeId: challenge.id, proof });
 }
 
-async function person(api, name = 'Erika', extra = {}, approved = true) {
+async function person(t, api, name = 'Erika', extra = {}, approved = true) {
   const issuer = await sd.generateKeyPair();
   const holder = await sd.generateKeyPair();
-  const registered = await register(api, issuer, { name: `${name}s Ausweisstelle`, employeeName: name });
-  assert.equal(registered.status, 201);
+  const statusState = { revoked: false, unavailable: false, expired: false, beforeResponse: null };
+  let publicUrl;
+  const server = createServer(async (req, res) => {
+    if (statusState.unavailable) { res.writeHead(503).end(); return; }
+    if (statusState.beforeResponse) await statusState.beforeResponse();
+    const bytes = new Uint8Array(STATUS_LIST_ENTRIES / 8);
+    if (statusState.revoked) bytes[0] = 1;
+    const iat = Math.floor(Date.now() / 1000) - (statusState.expired ? 60 : 0);
+    const token = await sd.signJwt({ alg: 'ES256', typ: 'statuslist+jwt' }, {
+      iss: issuer.did, sub: `${publicUrl}/api/status-list`, iat, exp: iat + STATUS_LIST_TTL, ttl: STATUS_LIST_TTL,
+      status_list: { bits: 1, lst: sd.b64url(deflateSync(bytes)) },
+    }, issuer.privateJwk);
+    res.writeHead(200, { 'Content-Type': 'application/statuslist+jwt' }).end(token);
+  }).listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  publicUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(() => new Promise((resolve) => {
+    server.close(resolve);
+    server.closeAllConnections();
+  }));
+  const registered = await register(api, issuer, { name: `${name}s Ausweisstelle`, employeeName: name, publicUrl });
+  assert.equal(registered.status, 201, JSON.stringify(registered.data));
   assert.equal(registered.data.trusted, false);
   if (approved) {
     assert.equal((await api(`/admin/issuers/${encodeURIComponent(issuer.did)}/trust`, { trusted: true, ownerName: name })).status, 200);
@@ -56,10 +79,11 @@ async function person(api, name = 'Erika', extra = {}, approved = true) {
     vct: EMPLOYEE_VCT, claims: {
       given_name: name, family_name: 'Müller', organisation: 'ISST', role: 'Mitarbeitende',
     },
+    status: { status_list: { idx: 0, uri: `${publicUrl}/api/status-list` } },
     ...extra,
   });
   return {
-    issuer, holder, credential,
+    issuer, holder, credential, statusState,
     async checkIn(reveal = ['given_name', 'family_name']) {
       const created = await api('/requests', {});
       assert.equal(created.status, 201);
@@ -73,7 +97,7 @@ async function person(api, name = 'Erika', extra = {}, approved = true) {
 }
 
 test('Public config includes HTTPS QR codes and static pages are served', async (t) => {
-  const { api, base } = await fixture(t);
+  const { api, base } = await fixture(t, { publicUrl: 'https://wallet.example.org' });
   const { data } = await api('/config');
   assert.equal(data.publicUrl, 'https://wallet.example.org');
   assert.match(data.startQrDataUrl, /^data:image\/png;base64,/);
@@ -83,6 +107,10 @@ test('Public config includes HTTPS QR codes and static pages are served', async 
   const page = await fetch(`${base}/`);
   assert.equal(page.status, 200);
   assert.match(await page.text(), /EUDI/);
+  const wallet = await (await fetch(`${base}/wallet.html`)).text();
+  assert.match(wallet, /name="wallet-origin" content="https:\/\/wallet\.example\.org"/);
+  const issuer = await sd.generateKeyPair();
+  assert.equal((await register(api, issuer, { publicUrl: 'http://localhost:3001' })).status, 400);
 });
 
 test('PWA manifest, offline shell and real PNG icons are available without caching APIs', async (t) => {
@@ -112,11 +140,11 @@ test('PWA manifest, offline shell and real PNG icons are available without cachi
 
 test('Ten check-ins, selective disclosure, deduplication and restart persistence', async (t) => {
   const { api, start } = await fixture(t);
-  const guest = await person(api);
+  const guest = await person(t, api);
   for (let index = 0; index < 10; index++) {
     const { request, presentation, result } = await guest.checkIn();
     assert.equal(result.data.ok, true);
-    assert.equal(result.data.steps.length, 7);
+    assert.equal(result.data.steps.length, 8);
     assert.deepEqual(Object.keys(result.data.claims).sort(), ['family_name', 'given_name']);
     assert.equal((await api(`/requests/${request.id}`)).data.status, 'done');
     assert.equal((await api(`/requests/${request.id}/response`, { presentation })).status, 409);
@@ -132,8 +160,9 @@ test('Ten check-ins, selective disclosure, deduplication and restart persistence
   assert.deepEqual(Object.keys(history[0].claims).sort(), ['family_name', 'given_name']);
   assert.equal(history[10].claims.role, 'Mitarbeitende');
   assert.equal(history[0].credentialId, history[10].credentialId);
-  const optionalGuest = await person(api, 'Ada');
+  const optionalGuest = await person(t, api, 'Ada');
   await optionalGuest.checkIn(['given_name', 'family_name', 'organisation', 'role']);
+  assert.deepEqual((await api('/dashboard')).data.stats, { registered: 2, checkins: 12 });
   const restarted = await start();
   assert.equal((await restarted.api('/issuers')).data[0].did, guest.issuer.did);
   assert.equal((await restarted.api('/attendees')).data.find((entry) => entry.name === 'Ada Müller').organisation, 'ISST');
@@ -142,7 +171,7 @@ test('Ten check-ins, selective disclosure, deduplication and restart persistence
 
 test('Manual trust, authenticated moderation, replay and reset', async (t) => {
   const { api } = await fixture(t, { trustMode: 'manual' });
-  const guest = await person(api, 'Erika', {}, false);
+  const guest = await person(t, api, 'Erika', {}, false);
   assert.equal((await api('/admin/replay', {})).status, 409);
   const denied = await guest.checkIn();
   assert.equal(denied.result.data.ok, false);
@@ -177,7 +206,7 @@ test('Requests expire after five minutes and unknown requests return 404', async
 
 test('Concurrent responses consume a QR exactly once', async (t) => {
   const { api } = await fixture(t);
-  const guest = await person(api);
+  const guest = await person(t, api);
   const created = (await api('/requests', {})).data;
   const request = (await api(`/requests/${created.id}`)).data;
   const presentation = await sd.createPresentation({
@@ -185,6 +214,7 @@ test('Concurrent responses consume a QR exactly once', async (t) => {
       issuerDid: guest.issuer.did, issuerPrivateJwk: guest.issuer.privateJwk,
       holderPublicJwk: guest.holder.publicJwk, vct: request.vct,
       claims: { given_name: 'Erika', family_name: 'Müller' },
+      status: sd.describeCredential(guest.credential).payload.status,
     }),
     reveal: request.required, holderPrivateJwk: guest.holder.privateJwk, aud: request.aud, nonce: request.nonce,
   });
@@ -199,7 +229,7 @@ test('Concurrent responses consume a QR exactly once', async (t) => {
 test('Twenty phones share a kiosk QR but get unique single-use nonces and identifiable results', async (t) => {
   const { api, start } = await fixture(t);
   const people = await Promise.all(Array.from({ length: 20 }, (_, index) => (
-    person(api, `Person ${index + 1}`, {}, index < 10)
+    person(t, api, `Person ${index + 1}`, {}, index < 10)
   )));
   const kiosk = (await api('/requests', { mode: 'kiosk' })).data;
   assert.equal((await api(`/requests/${kiosk.id}/response`, { presentation: 'invalid' })).status, 409);
@@ -207,7 +237,7 @@ test('Twenty phones share a kiosk QR but get unique single-use nonces and identi
   assert.ok(sessions.every((session) => session.status === 201));
   assert.equal(new Set(sessions.map((session) => session.data.nonce)).size, 20);
   const before = (await api('/dashboard')).data;
-  assert.deepEqual(before.stats, { registered: 20, trusted: 10, checkedIn: 0 });
+  assert.deepEqual(before.stats, { registered: 20, checkins: 0 });
   assert.deepEqual(before.attempts, []);
   const results = await Promise.all(sessions.map(async ({ data: request }, index) => {
     const presentation = await sd.createPresentation({
@@ -221,7 +251,7 @@ test('Twenty phones share a kiosk QR but get unique single-use nonces and identi
   assert.equal(results.filter((result) => result.data.ok).length, 10);
   assert.equal((await api(`/requests/${kiosk.id}`)).data.status, 'pending');
   const dashboard = (await api('/dashboard')).data;
-  assert.deepEqual(dashboard.stats, { registered: 20, trusted: 10, checkedIn: 10 });
+  assert.deepEqual(dashboard.stats, { registered: 20, checkins: 10 });
   assert.equal(dashboard.attempts.length, 20);
   assert.equal(new Set(dashboard.attempts.map((attempt) => attempt.id)).size, 20);
   for (const [index, session] of sessions.entries()) {
@@ -245,7 +275,7 @@ test('Twenty phones share a kiosk QR but get unique single-use nonces and identi
 
 test('Rejected identities remain explicitly unverified and expose the exact failing step, not hidden claims', async (t) => {
   const { api } = await fixture(t);
-  const guest = await person(api);
+  const guest = await person(t, api);
   const { request, presentation } = await guest.checkIn();
   const parts = presentation.split('~');
   parts[1] = sd.jsonB64(['salt', 'given_name', 'Ungeprüfter Name']);
@@ -286,16 +316,16 @@ test('Kiosk sessions respect expiry and attempt history is bounded and resettabl
 
 test('Wrong credential type and missing required names are rejected', async (t) => {
   const { api } = await fixture(t);
-  const wrongType = await person(api, 'Typ', { vct: 'urn:other' });
+  const wrongType = await person(t, api, 'Typ', { vct: 'urn:other' });
   assert.match((await wrongType.checkIn()).result.data.error, /Mitarbeiterausweis/);
-  const missing = await person(api, 'Feld', { claims: { given_name: 'Erika' } });
+  const missing = await person(t, api, 'Feld', { claims: { given_name: 'Erika' } });
   assert.match((await missing.checkIn()).result.data.error, /erforderlichen/);
   assert.deepEqual((await api('/attendees')).data, []);
 });
 
 test('Signed issuer URL updates preserve approval; identity updates require renewed trust', async (t) => {
   const { api, base } = await fixture(t, { trustMode: 'manual' });
-  const guest = await person(api);
+  const guest = await person(t, api);
   const update = await register(api, guest.issuer, {
     name: 'Erikas Ausweisstelle', employeeName: 'Erika', publicUrl: 'https://new-issuer.example.org',
   });
@@ -350,9 +380,9 @@ test('Registration proves key ownership, binds the hub audience and rejects repl
   assert.match(await page.text(), /name="issuer-origins" content="\[&quot;https:\/\/issuer.example.org&quot;\]"/);
 });
 
-test('Revocation rejects an existing credential and history contains only disclosed claims', async (t) => {
+test('Issuer trust withdrawal rejects an existing credential and history contains only disclosed claims', async (t) => {
   const { api } = await fixture(t);
-  const guest = await person(api);
+  const guest = await person(t, api);
   const first = await guest.checkIn();
   assert.equal(first.result.data.ok, true);
   const attendee = (await api('/attendees')).data[0];
@@ -366,6 +396,52 @@ test('Revocation rejects an existing credential and history contains only disclo
   assert.equal(second.result.data.ok, false);
   assert.match(second.result.data.error, /Vertrauensliste/);
   assert.equal((await api('/attendees')).data[0].checkins.length, 1);
+});
+
+test('Credential revocation, expired lists, unavailable issuers and legacy credentials never produce successful check-ins', async (t) => {
+  const { api } = await fixture(t);
+  const guest = await person(t, api);
+  assert.equal((await guest.checkIn()).result.data.ok, true);
+  guest.statusState.revoked = true;
+  const revoked = (await guest.checkIn()).result.data;
+  assert.equal(revoked.ok, false);
+  assert.equal(revoked.failedAt, 'Widerrufsstatus');
+  assert.match(revoked.error, /widerrufen/);
+  guest.statusState.unavailable = true;
+  const unavailable = (await guest.checkIn()).result.data;
+  assert.equal(unavailable.ok, false);
+  assert.equal(unavailable.failedAt, 'Widerrufsstatus');
+  assert.match(unavailable.error, /HTTP 503/);
+  guest.statusState.unavailable = false;
+  guest.statusState.expired = true;
+  const expired = (await guest.checkIn()).result.data;
+  assert.equal(expired.ok, false);
+  assert.equal(expired.failedAt, 'Widerrufsstatus');
+  assert.match(expired.error, /nicht mehr aktuell/);
+  const legacy = await person(t, api, 'Altbestand', { status: undefined });
+  const unknown = (await legacy.checkIn()).result.data;
+  assert.equal(unknown.ok, false);
+  assert.match(unknown.error, /neu ausstellen/);
+  assert.deepEqual((await api('/dashboard')).data.stats, { registered: 2, checkins: 1 });
+});
+
+test('Trust removed while fetching a valid credential status prevents check-in', async (t) => {
+  const { api } = await fixture(t);
+  const guest = await person(t, api);
+  let release;
+  const hold = new Promise((resolve) => { release = resolve; });
+  let arrived;
+  const reachedStatusIssuer = new Promise((resolve) => { arrived = resolve; });
+  guest.statusState.beforeResponse = () => { arrived(); return hold; };
+  const checkingIn = guest.checkIn();
+  await reachedStatusIssuer;
+  assert.equal((await api(`/admin/issuers/${encodeURIComponent(guest.issuer.did)}/trust`, { trusted: false })).status, 200);
+  release();
+  const result = (await checkingIn).result.data;
+  assert.equal(result.ok, false);
+  assert.equal(result.failedAt, 'Issuer-Vertrauen');
+  assert.match(result.error, /während der Prüfung/);
+  assert.deepEqual((await api('/dashboard')).data.stats, { registered: 1, checkins: 0 });
 });
 
 test('Invalid deployment configuration fails before serving requests', async (t) => {

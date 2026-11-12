@@ -27,7 +27,8 @@ for (const role of ['workshop', 'issuer']) {
         ['/issuers/unknown/trust', { trusted: true, ownerName: 'Unbefugt' }]]
       : [['/session'], ['/status'], ['/trust'], ['/setup', { name: 'Unbefugt', employeeName: 'Unbefugt' }],
         ['/register', {}], ['/offers', { claims: {} }], ['/offers/unknown'],
-        ['/offers/unknown/approve', { pairingCode: '123456' }], ['/offers/unknown/cancel', {}]];
+        ['/offers/unknown/approve', {}], ['/offers/unknown/cancel', {}],
+        ['/credentials'], ['/credentials/unknown/revoke', {}]];
     for (const [route, body] of routes) {
       for (const value of [undefined, 'wrong-token', `${adminToken.slice(0, -1)}!`]) {
         const response = await fetch(`${base}${prefix}${route}`, {
