@@ -82,6 +82,13 @@ nav a[aria-current] { color: var(--accent-dark); font-weight: 650; }
 .did { font-size: .95rem; }
 .credential { border-top: 4px solid var(--accent); }
 .empty-state { padding-block: 32px; border-style: dashed; box-shadow: none; }
+.wallet-empty { text-align: center; padding-block: 36px; }
+.wallet-empty > button { width: 100%; margin-top: 12px; }
+.wallet-outline { width: 108px; height: 72px; border: 2px solid #9dbbb0; border-radius: 14px; margin: 0 auto 24px; position: relative; background: #edf5f0; }
+.wallet-outline::after { content: ""; position: absolute; width: 32px; height: 22px; border: 2px solid #9dbbb0; border-radius: 7px; right: -5px; top: 21px; background: #fff; }
+.wallet-credentials .credential { border-top-width: 6px; background: linear-gradient(140deg, #e5f5ee 0, #fff 60%); overflow-wrap: anywhere; }
+.wallet-credentials .credential > h2 { font-size: 1.8rem; }
+.wallet-settings > .card { padding-inline: 0; border: 0; box-shadow: none; }
 .attributes { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); margin: 12px 0 20px; }
 .attributes dt, .attributes dd { margin: 0; padding: 10px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
 .attributes dt { color: var(--muted); }
@@ -129,9 +136,9 @@ td input[type="checkbox"] { width: 32px; height: 32px; margin: 6px; }
 .live-indicator span { width: 8px; height: 8px; background: var(--accent); border-radius: 50%; }
 .event-label { color: var(--muted); }
 .kiosk-layout { display: grid; grid-template-columns: 3fr 2fr; min-height: calc(100dvh - 88px); }
-.kiosk-main { position: relative; padding: 32px 48px 24px; display: flex; flex-direction: column; align-items: center; text-align: center; min-width: 0; min-height: 0; }
+.kiosk-main { position: relative; padding: 24px 48px 20px; display: flex; flex-direction: column; align-items: center; text-align: center; min-width: 0; min-height: 0; }
 .kiosk-main > .message { position: absolute; top: 8px; left: 24px; right: 24px; z-index: 2; }
-.kiosk-main h1 { font-size: clamp(2.1rem, 3.1vw, 3.5rem); margin: 8px 0 20px; }
+.kiosk-main h1 { font-size: clamp(2rem, 2.4vw, 3rem); margin: 0 0 8px; }
 .qr-stage { display: flex; flex-direction: column; align-items: center; flex: 1; justify-content: center; }
 .qr-frame { display: grid; place-items: center; background: #fff; border-radius: 24px; border: 1px solid var(--line); padding: 8px; box-shadow: 0 10px 40px #173a2910; }
 .qr-frame img { display: block; width: clamp(480px, 27vw, 520px); height: auto; }
@@ -143,7 +150,30 @@ td input[type="checkbox"] { width: 32px; height: 32px; margin: 6px; }
 .onboarding-qr img { border-radius: 10px; flex-shrink: 0; }
 .onboarding-qr p { margin: 4px 0; }
 .onboarding-qr span { font-size: .8rem; overflow-wrap: anywhere; }
-.kiosk-sidebar { background: #e9f0eb; padding: 32px; display: flex; flex-direction: column; gap: 20px; min-height: 0; min-width: 0; }
+.kiosk-sidebar { background: #e9f0eb; padding: 24px; display: flex; flex-direction: column; gap: 16px; min-height: 0; min-width: 0; }
+.kiosk-sidebar > .card { padding: 18px 22px; }
+.progress-panel, .activity-panel { display: flex; flex-direction: column; min-height: 180px; overflow: hidden; }
+.progress-panel { flex: 0 1 270px; }
+.activity-panel { flex: 1.4; min-height: 230px; }
+.progress-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; padding-bottom: 12px; }
+.progress-stats strong { display: block; font-size: 1.6rem; line-height: 1.2; color: var(--accent-dark); }
+.progress-stats span { font-size: .85rem; }
+.progress-list, .attempt-list { list-style: none; padding: 0; margin: 0; overflow-y: auto; min-height: 0; }
+.progress-list > li, .attempt-list > li { padding: 10px 0; border-top: 1px solid var(--line); }
+.progress-list > li > :is(strong, span) { display: block; overflow-wrap: anywhere; }
+.progress-list > li > span { font-size: .85rem; }
+.progress-steps { display: flex; flex-wrap: wrap; list-style: none; gap: 6px; padding: 6px 0 0; font-size: .78rem; }
+.progress-steps li { border-radius: 8px; padding: 3px 8px; color: var(--muted); background: #f0f3f1; }
+.progress-steps .complete { color: var(--accent-dark); background: #e1f4e9; }
+.attempt-list { flex: 1; }
+.attempt-detail > summary { display: flex; gap: 10px; align-items: start; color: var(--ink); padding: 6px 0; }
+.attempt-person { flex: 1; min-width: 0; }
+.attempt-person > * { display: block; overflow-wrap: anywhere; }
+.attempt-code { font-size: .8rem; font-variant-numeric: tabular-nums; }
+.attempt-detail p, .attempt-detail .checks li { font-size: .85rem; }
+.attempt-error { color: var(--danger); font-size: .85rem; margin: 6px 0 0; overflow-wrap: anywhere; }
+.verification-help { flex-shrink: 0; }
+.verification-help > summary { font-size: .85rem; padding-bottom: 0; }
 .verification-panel { flex: 0 1 auto; overflow-y: auto; }
 .attendees-panel { display: flex; flex-direction: column; flex: 1; min-height: 150px; overflow: hidden; }
 .attendee-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; }
@@ -165,10 +195,11 @@ td input[type="checkbox"] { width: 32px; height: 32px; margin: 6px; }
 .attendee-avatar { display: grid; place-items: center; width: 40px; height: 40px; background: #e4f0e8; border-radius: 50%; color: var(--accent-dark); flex-shrink: 0; font-weight: 700; }
 .count { font-size: 1rem; }
 .kiosk-disclaimer { margin: 0; text-align: center; font-size: .8rem; color: var(--muted); }
-.kiosk-result { display: flex; flex-direction: column; justify-content: center; align-items: center; flex: 1; max-width: 750px; overflow-wrap: anywhere; }
-.kiosk-result h2 { font-size: 3rem; }
-.kiosk-result p { font-size: 1.25rem; }
-.kiosk-result .muted { font-size: 1rem; }
+.kiosk-result { width: 100%; max-width: 750px; background: #e1f4e9; border-radius: 14px; padding: 12px 18px; margin: 8px 0; overflow-wrap: anywhere; max-height: 125px; overflow-y: auto; flex-shrink: 0; }
+.kiosk-result.failure { background: #fbe9e9; }
+.kiosk-result h2 { font-size: 1.15rem; margin-bottom: 6px; }
+.kiosk-result p { font-size: .95rem; margin-bottom: 4px; }
+.kiosk-result .muted { font-size: .8rem; }
 .shared-fields { padding: 16px; border-radius: 12px; background: #dfefe5; }
 @media (min-width: 1200px) and (min-height: 950px) {
   .kiosk-body { height: 100dvh; overflow: hidden; }
@@ -198,7 +229,7 @@ td input[type="checkbox"] { width: 32px; height: 32px; margin: 6px; }
   .event-label { display: none; }
   .live-indicator { font-size: .8rem; }
   .kiosk-instructions { flex-direction: column; gap: 6px; text-align: left; }
-  .kiosk-result h2 { font-size: 2rem; }
+  .kiosk-result h2 { font-size: 1.15rem; }
   .onboarding-qr { align-items: start; }
   .onboarding-qr img { width: 90px; height: 90px; }
 }

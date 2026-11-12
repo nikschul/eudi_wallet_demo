@@ -21,9 +21,7 @@
     <div id="error" class="message error" role="alert" hidden></div>
     <div id="notice" class="message notice" role="status" hidden></div>
     <section class="hero">
-      <span class="eyebrow">Digitale Identität zum Ausprobieren</span>
       <h1 data-event-title>EUDI Wallet Workshop</h1>
-      <p class="lead">Deine Identität.<br><strong>Deine Entscheidung.</strong></p>
       <p>Deine Ausweisstelle läuft auf deinem Rechner. Deine Wallet bleibt auf deinem Handy. Am Empfang zeigst du nur die Angaben vor, die du freigibst.</p>
       <div class="journey" aria-label="Dein Weg zum Check-in">
         <span><b>01 · Rechner</b> Issuer hosten</span><span><b>02 · Handy</b> Ausweis erhalten</span><span><b>03 · Fernseher</b> Einchecken</span>
@@ -37,15 +35,15 @@
       <h2>Dein Workshop in vier Schritten</h2>
       <ol class="guided-list">
         <li><strong>Eigene Ausweisstelle betreiben.</strong> Starte auf deinem Linux-/WSL-Rechner den Issuer mit Docker und einem Cloudflare-Tunnel.</li>
-        <li><strong>Vertrauen sichtbar machen.</strong> Melde deinen Issuer am Workshop an. Die Moderation vergleicht den Schlüsselfingerabdruck und ordnet ihn dir zu.</li>
+        <li><strong>Issuer registrieren.</strong> Melde deinen Issuer am Workshop an. Die Moderation vergleicht den Schlüsselfingerabdruck und ordnet ihn dir zu.</li>
         <li><strong>Ausstellen und annehmen.</strong> Scanne den Angebots-QR deines Rechners. Verbinde die Wallet, vergleiche den Code und signiere bewusst auf dem Rechner.</li>
-        <li><strong>Vorzeigen statt neu ausstellen.</strong> Scanne den großen Empfangs-QR am Fernseher und entscheide, welche Angaben öffentlich in der Check-in-Liste erscheinen.</li>
+        <li><strong>Am Empfang einchecken.</strong> Scanne den großen Empfangs-QR am Fernseher und entscheide, welche Angaben öffentlich in der Check-in-Liste erscheinen.</li>
       </ol>
       <p>Du brauchst keinen Issuer auf diesem Handy. Die Anleitung für deinen Rechner stellt die Moderation bereit.</p>
       <div data-explain="trust"></div>
     </section>
     <section class="card info">
-      <h2>Ein Browser. Dein Gerät.</h2>
+      <h2>Alle QR-Links im selben Browser öffnen</h2>
       <p>Öffne alle QR-Links im <strong>selben Browser</strong>: auf dem iPhone meist Safari, auf Android meist Chrome. Im privaten Modus können deine Daten beim Schließen verloren gehen.</p>
       <p>Eine Installation ist nicht nötig. Wenn du die PWA zum Home-Bildschirm hinzufügst, kann sie auf iOS einen <strong>eigenen Speicher</strong> haben. Für den Kamera-QR-Ablauf empfehlen wir deshalb den Browser. Falls du die PWA nutzt, übertrage den Ausstellungs- oder Empfangslink über „QR-Link öffnen“ in der Wallet.</p>
       <button id="install" class="secondary" type="button" hidden>Demo als PWA installieren</button>

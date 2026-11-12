@@ -1,15 +1,22 @@
-import { el, api, explain, raw, attributes, action, formAction, run, showError, clearError } from './lib/ui.js';
+import { el, api, explain, raw, attributes, action, formAction, run, showError } from './lib/ui.js';
 import { sha256b64 } from './lib/sdjwt.js';
+import { managementAccess } from './lib/management.js';
 
 const root = document.getElementById('app');
-const tokenKey = 'issuerAdminToken';
-let token = '';
 let config;
 let pollTimer;
 let pollGeneration = 0;
 let activeOffer;
 
-const adminApi = (route, options = {}) => api(`/issuer${route}`, { ...options, token });
+const access = managementAccess({
+  prefix: '/issuer', content: root, onUnlock: () => dashboard(),
+  onLock: () => {
+    stopPolling();
+    activeOffer = null;
+    root.replaceChildren();
+  },
+});
+const issuerApi = (route, options = {}) => access.request(route, options);
 
 function field(name, label, { value = '', required = true, type = 'text', ...options } = {}) {
   return el('label', { class: 'field' }, label,
@@ -21,37 +28,9 @@ function stopPolling() {
   pollGeneration += 1;
 }
 
-function clearToken() {
-  token = '';
-  sessionStorage.removeItem(tokenKey);
-  activeOffer = null;
-  stopPolling();
-}
-
-function showLogin() {
-  stopPolling();
-  const form = formAction(el('form', { class: 'stack' },
-    field('token', 'Admin-Token', { type: 'password', maxlength: 256 }),
-    el('button', { type: 'submit' }, 'Verwaltung entsperren')), async (data) => {
-    token = String(data.get('token')).trim();
-    try {
-      const status = await adminApi('/status');
-      sessionStorage.setItem(tokenKey, token);
-      await dashboard(status);
-    } catch (error) {
-      token = '';
-      throw error;
-    }
-  });
-  root.replaceChildren(el('section', { class: 'card login-card' },
-    el('span', { class: 'step-number' }, '01'), el('h2', {}, 'Verwaltung entsperren'),
-    el('p', {}, 'Nutze das Admin-Token dieses Issuer-Servers, nicht das Token der Workshop-Zentrale. Du findest es beim Serverstart.'),
-    form, el('p', { class: 'muted' }, 'Das Token bleibt nur für diesen Browser-Tab im Sitzungsspeicher. Es ist kein Wallet-Schlüssel und gehört nicht in den QR-Code.')));
-}
-
 function connectionCard(status) {
   return el('section', { class: 'card connection-card' },
-    el('h2', {}, 'Getrennte Systeme, klarer Weg'),
+    el('h2', {}, 'Ablauf'),
     el('ol', { class: 'workflow' },
       el('li', {}, 'Desktop: Identität und Verbindung zur Zentrale einrichten.'),
       el('li', {}, 'Smartphone: QR-Code mit der Workshop-Wallet öffnen und verbinden.'),
@@ -69,12 +48,13 @@ function connectionCard(status) {
 async function dashboard(status = null) {
   stopPolling();
   activeOffer = null;
-  status ||= await adminApi('/status');
+  status ||= await issuerApi('/status');
   const fingerprint = status.did ? (await sha256b64(status.did)).slice(0, 16) : null;
   const trustPanel = el('section', { class: 'card stack' });
   const offerPanel = el('section', { class: 'card stack' });
   const transferPanel = el('section', { class: 'card stack transfer-panel', hidden: true });
   let canOffer = false;
+  let trustVersion = 0;
 
   const identityForm = formAction(el('form', { class: 'stack' },
     field('name', 'Name der Ausweisstelle *', { value: status.name || 'Meine Ausweisstelle' }),
@@ -82,20 +62,13 @@ async function dashboard(status = null) {
     el('p', { class: 'muted' }, 'Nach Namensänderungen musst du die Ausweisstelle erneut bei der Zentrale registrieren. Der Schlüssel bleibt derselbe.'),
     el('button', { type: 'submit' }, status.did ? 'Angaben speichern' : 'Issuer-Identität anlegen')),
   async (data) => {
-    const updated = await adminApi('/setup', { body: {
+    const updated = await issuerApi('/setup', { body: {
       name: String(data.get('name')).trim(), employeeName: String(data.get('employeeName')).trim(),
     } });
     await dashboard(updated);
   });
 
-  const signOut = action(el('button', { type: 'button', class: 'secondary' }, 'Verwaltung sperren'), () => {
-    clearToken();
-    clearError();
-    showLogin();
-  });
   root.replaceChildren(
-    el('div', { class: 'dashboard-toolbar' },
-      el('p', { class: 'muted' }, 'Admin-Zugriff aktiv · Schlüssel ausschließlich auf dem Server'), signOut),
     el('div', { class: 'dashboard-grid' },
       el('div', { class: 'stack' },
         el('section', { class: 'card stack' }, el('span', { class: 'eyebrow' }, '01 / Identität'),
@@ -125,7 +98,7 @@ async function dashboard(status = null) {
       el('button', { type: 'submit' }, 'QR-Angebot erstellen – noch nicht signieren')),
     async (data) => {
       const claims = Object.fromEntries([...data.entries()].map(([key, value]) => [key, String(value).trim()]));
-      const offer = await adminApi('/offers', { body: { claims } });
+      const offer = await issuerApi('/offers', { body: { claims } });
       activeOffer = offer;
       identityForm.querySelector('button').disabled = true;
       register.disabled = true;
@@ -142,8 +115,10 @@ async function dashboard(status = null) {
   }
 
   async function refreshTrust() {
+    const version = ++trustVersion;
     try {
-      const record = await adminApi('/trust');
+      const record = await issuerApi('/trust');
+      if (version !== trustVersion) return;
       canOffer = typeof record.did === 'string' && record.status !== 'unregistered';
       const trusted = record.trusted === true;
       trustStatus.textContent = !canOffer ? 'Noch nicht mit den aktuellen Angaben registriert.'
@@ -154,6 +129,7 @@ async function dashboard(status = null) {
       connectionStatus.className = 'connection-ok';
       trustDetails.replaceChildren(raw(record, 'Öffentlichen Registereintrag anzeigen'));
     } catch (error) {
+      if (version !== trustVersion) return;
       canOffer = false;
       trustStatus.textContent = 'Der aktuelle Registerstatus konnte nicht geprüft werden.';
       trustStatus.className = 'message warning';
@@ -167,7 +143,7 @@ async function dashboard(status = null) {
   const connectionStatus = el('p', { class: 'muted' }, 'Verbindung wird geprüft …');
   const trustDetails = el('div');
   const register = action(el('button', { type: 'button', disabled: !status.did }, 'Bei der Zentrale registrieren'), async () => {
-    await adminApi('/register', { body: {} });
+    await issuerApi('/register', { body: {} });
     await refreshTrust();
   });
   const refresh = action(el('button', { type: 'button', class: 'secondary' }, 'Verbindung & Vertrauen aktualisieren'), refreshTrust);
@@ -209,7 +185,7 @@ async function dashboard(status = null) {
         }),
         el('button', { type: 'submit' }, 'Mitarbeiterausweis jetzt signieren')),
       async (data) => {
-        const updated = await adminApi(`/offers/${offer.id}/approve`, { body: {
+        const updated = await issuerApi(`/offers/${offer.id}/approve`, { body: {
           pairingCode: String(data.get('pairingCode')).trim(),
         } });
         activeOffer = { ...activeOffer, ...updated };
@@ -230,7 +206,7 @@ async function dashboard(status = null) {
     }
     if (['offered', 'bound'].includes(offer.status)) {
       details.append(action(el('button', { type: 'button', class: 'secondary' }, 'Angebot abbrechen'), async () => {
-        const updated = await adminApi(`/offers/${offer.id}/cancel`, { body: {} });
+        const updated = await issuerApi(`/offers/${offer.id}/cancel`, { body: {} });
         activeOffer = { ...activeOffer, ...updated };
         renderTransfer(updated);
       }));
@@ -244,7 +220,7 @@ async function dashboard(status = null) {
     pollTimer = setTimeout(async () => {
       if (!activeOffer || generation !== pollGeneration) return;
       try {
-        const updated = await adminApi(`/offers/${activeOffer.id}`);
+        const updated = await issuerApi(`/offers/${activeOffer.id}`);
         if (generation !== pollGeneration || !activeOffer) return;
         const order = { offered: 0, bound: 1, issued: 2, accepted: 3, cancelled: 3 };
         if (order[updated.status] < order[activeOffer.status]) {
@@ -273,15 +249,6 @@ async function dashboard(status = null) {
 run(async () => {
   config = await api('/config');
   if (config.role !== 'issuer') throw new Error('Diese Adresse gehört nicht zu einem eigenständigen Issuer-Server.');
-  token = sessionStorage.getItem(tokenKey) || '';
-  if (!token) return showLogin();
-  try {
-    await dashboard();
-  } catch (error) {
-    if (error.status !== 401) throw error;
-    clearToken();
-    showLogin();
-    showError(error);
-  }
+  await access.start();
 });
 window.addEventListener('pagehide', stopPolling);

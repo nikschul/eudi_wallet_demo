@@ -1,8 +1,8 @@
-const CACHE = 'eudi-shell-v2';
+const CACHE = 'eudi-shell-v4';
 const SHELL = [
   '/', '/index.html', '/wallet.html', '/kiosk.html', '/admin.html',
   '/styles.css', '/index.js', '/wallet.js', '/kiosk.js', '/admin.js',
-  '/lib/ui.js', '/lib/texts.js', '/lib/sdjwt.js', '/lib/protocol.js', '/manifest.webmanifest',
+  '/lib/ui.js', '/lib/management.js', '/lib/texts.js', '/lib/sdjwt.js', '/lib/protocol.js', '/manifest.webmanifest',
   '/icons/wallet.svg', '/icons/icon-192.png', '/icons/icon-512.png', '/icons/apple-touch-icon.png',
 ];
 

@@ -3,7 +3,7 @@ import { EMPLOYEE_VCT, HOLDER_PROOF, decodeOffer, publicOrigin, signProof } from
 import {
   el, api, explain, raw, attributes, steps, labels, action, formAction,
   run, setupPage, readStored, writeStored, removeStored, requireCrypto, didCard, clearError,
-  currentRequestId, readWalletFor,
+  currentRequestId, readWalletFor, notify,
 } from './lib/ui.js';
 
 const root = document.getElementById('app');
@@ -78,9 +78,9 @@ function onboarding() {
     writeStored('wallet', { ...pair, credentials: [] });
     await render();
   });
-  root.replaceChildren(journey(0), el('section', { class: 'card' },
-    el('span', { class: 'step-number' }, '01'),
-    el('h2', {}, 'Dein Handy wird zu deiner Wallet'),
+  root.replaceChildren(journey(0), el('section', { class: 'card empty-state wallet-empty' },
+    el('div', { class: 'wallet-outline', 'aria-hidden': 'true' }),
+    el('h2', {}, 'Deine Wallet ist noch leer'),
     el('p', {}, 'Die Ausweisstelle läuft auf deinem Rechner. Hier auf dem Handy verwahrst du deinen Ausweis und entscheidest später, was du teilst.'),
     el('p', {}, fromOffer ? 'Dein Ausstellungsangebot wartet bereits. Richte zuerst deine Wallet ein; danach geht es automatisch weiter.'
       : 'Keine Anmeldung und keine Installation: Dein Browser erzeugt einen persönlichen Schlüssel.'),
@@ -145,12 +145,8 @@ async function issuance(wallet, link, version) {
       // Saving locally happens first; failed acknowledgements can be retried safely.
       await remote('/ack', { proof: await holderProof(wallet, offer) });
       history.replaceState(null, '', '/wallet.html');
-      renderVersion++;
-      root.replaceChildren(journey(2), el('section', { class: 'card success result-card' },
-        el('span', { class: 'result-symbol', 'aria-hidden': 'true' }, '✓'),
-        el('h2', {}, 'Dein Mitarbeiterausweis ist in der Wallet'),
-        el('p', {}, 'Nimm dein Handy zum Fernseher und scanne dort den großen Check-in-QR. Dein Issuer wird dafür nicht mehr benötigt.'),
-        action(el('button', { type: 'button' }, 'Meine Wallet öffnen'), goHome)));
+      await render();
+      notify('Mitarbeiterausweis gespeichert. Du kannst jetzt am Empfang einchecken.');
     });
     panel.replaceChildren(el('span', { class: 'eyebrow' }, 'Auf deinem Rechner signiert'),
       el('h2', {}, 'Dein Mitarbeiterausweis ist bereit'),
@@ -193,11 +189,17 @@ async function issuance(wallet, link, version) {
 }
 
 async function consent(wallet, id, version) {
-  const request = await api(`/requests/${encodeURIComponent(id)}`);
+  let request = await api(`/requests/${encodeURIComponent(id)}`);
   if (version !== renderVersion) return;
   if (request.status !== 'pending') {
     throw new Error(request.status === 'expired' ? 'Dieser QR-Code ist abgelaufen. Bitte scanne den aktuellen Code am Empfang.'
-      : 'Dieser QR-Code wurde schon verwendet. Bitte scanne einen neuen Code.');
+      : 'Dieser Check-in-Versuch wurde schon verwendet. Bitte scanne den QR am Empfang erneut.');
+  }
+  if (request.mode === 'kiosk') {
+    request = await api(`/requests/${encodeURIComponent(id)}/sessions`, { body: {} });
+    if (version !== renderVersion) return;
+    id = request.id;
+    history.replaceState(null, '', `/wallet.html#req=${id}`);
   }
   const credential = [...wallet.credentials].reverse().sort((a, b) => b.receivedAt - a.receivedAt).find((entry) => {
     const { payload } = sd.describeCredential(entry.sdjwt);
@@ -220,7 +222,7 @@ async function consent(wallet, id, version) {
   });
   const form = formAction(el('form', { class: 'stack' },
     el('fieldset', {}, el('legend', {}, 'Welche Angaben möchtest du teilen?'), choices),
-    el('p', { class: 'privacy-note' }, 'Die freigegebenen Angaben werden mit Aussteller, Nachweistyp und Zeit am Fernseher für alle sichtbar gespeichert. Nicht ausgewählte Angaben bleiben verborgen. Verwende nur Demo-Daten.'),
+    el('p', { class: 'privacy-note' }, 'Die freigegebenen Angaben werden mit Aussteller, Nachweistyp und Zeit am Fernseher für alle sichtbar gespeichert. Auch abgelehnte Versuche erscheinen dort mit dem angegebenen, dann noch ungeprüften Namen und Fehlergrund. Nicht ausgewählte Angaben bleiben verborgen. Verwende nur Demo-Daten.'),
     el('button', { type: 'submit' }, 'Freigeben & einchecken'),
     action(el('button', { type: 'button', class: 'secondary' }, 'Ablehnen'), goHome)), async () => {
     requireCrypto();
@@ -234,16 +236,19 @@ async function consent(wallet, id, version) {
     root.replaceChildren(journey(2), el('section', { class: `card result-card ${result.ok ? 'success' : 'failure'}` },
       el('span', { class: 'result-symbol', 'aria-hidden': 'true' }, result.ok ? '✓' : '✗'),
       el('h2', {}, result.ok ? 'Du bist eingecheckt' : 'Check-in nicht möglich'),
+      el('p', { class: 'attempt-code' }, `Versuch ${id.slice(0, 8)}`),
       el('p', {}, result.ok ? 'Am Fernseher siehst du genau die von dir geteilten Angaben.' : result.error),
-      result.ok ? attributes(result.claims) : el('p', {}, 'Wenn die Vertrauensfreigabe fehlt: Bitte die Moderation um Freigabe deines Issuers. Danach denselben Ausweis mit einem neuen Check-in-QR verwenden.'),
+      result.ok ? attributes(result.claims) : el('p', {}, 'Wenn die Vertrauensfreigabe fehlt: Bitte die Moderation um Freigabe deines Issuers. Danach den Kiosk-QR erneut scannen und denselben Ausweis verwenden.'),
       steps(result), explain('trust'), raw(result), action(el('button', { type: 'button', class: 'secondary' }, 'Zur Wallet'), goHome)));
   });
-  root.replaceChildren(journey(2), el('section', { class: 'card' }, el('span', { class: 'eyebrow' }, 'Vorzeigen statt neu ausstellen'),
-    el('h2', {}, `${request.verifierName} möchte folgende Angaben sehen`), form, explain('sd'), explain('binding'), raw(request)));
+  root.replaceChildren(journey(2), el('section', { class: 'card' },
+    el('h2', {}, `${request.verifierName} möchte folgende Angaben sehen`),
+    el('p', { class: 'muted attempt-code' }, `Versuch ${id.slice(0, 8)} · Du findest diesen Code auch am Kiosk.`),
+    form, explain('sd'), explain('binding'), raw(request)));
 }
 
 async function home(wallet, version) {
-  const credentials = el('section', { class: 'stack' }, el('h2', {}, 'Meine Nachweise'));
+  const credentials = el('section', { class: 'stack wallet-credentials', 'aria-label': 'Deine Ausweise' });
   const linkInput = el('input', { type: 'url', name: 'link', required: true, id: 'checkin-url', placeholder: 'https://…/wallet.html#…', autocomplete: 'off' });
   const linkForm = formAction(el('form', { class: 'stack' },
     el('label', { for: 'checkin-url' }, 'QR-Link einfügen (zum Beispiel in der installierten PWA)'), linkInput,
@@ -256,22 +261,27 @@ async function home(wallet, version) {
     history.replaceState(null, '', url.pathname + url.hash);
     await render();
   });
-  root.replaceChildren(journey(wallet.credentials.length ? 2 : 1), didCard(wallet.did), credentials,
+  root.replaceChildren(journey(wallet.credentials.length ? 2 : 1), credentials,
     el('section', { class: 'card' }, el('h2', {}, wallet.credentials.length ? 'Nächster Schritt: Empfang' : 'Nächster Schritt: eigener Issuer'),
       el('p', {}, wallet.credentials.length
         ? 'Scanne mit der Kamera den großen QR am Fernseher. Dort zeigst du deinen vorhandenen Ausweis vor.'
         : 'Hoste deine Ausweisstelle auf deinem Rechner. Erstelle dort ein Angebot und scanne dessen QR mit diesem Handy. Deine Wallet bleibt hier.'),
       explain('issuance')),
-    action(el('button', { type: 'button', class: 'secondary' }, 'Vertrauensstatus aktualisieren'), render),
+    ...(wallet.credentials.length ? [action(el('button', { type: 'button', class: 'secondary' }, 'Vertrauensstatus aktualisieren'), render)] : []),
     el('details', { class: 'card' }, el('summary', {}, 'QR-Link öffnen'), linkForm),
-    action(el('button', { type: 'button', class: 'secondary danger' }, 'Wallet zurücksetzen'), async () => {
+    el('details', { class: 'card wallet-settings' }, el('summary', {}, 'Wallet-Details'),
+      didCard(wallet.did),
+      action(el('button', { type: 'button', class: 'secondary danger' }, 'Wallet zurücksetzen'), async () => {
       if (!confirm('Wallet-Schlüssel und Ausweise auf diesem Handy unwiderruflich löschen? Die Ausweisstelle auf deinem Rechner bleibt erhalten.')) return;
       removeStored('wallet', 'pendingOffer');
       await render();
-    }));
-  const show = (issuers) => credentials.replaceChildren(el('h2', {}, 'Meine Nachweise'),
+    })));
+  const show = (issuers) => credentials.replaceChildren(
     ...wallet.credentials.length ? [...wallet.credentials].reverse().map((entry) => credentialCard(entry, issuers))
-      : [el('p', { class: 'muted' }, 'Noch kein Ausweis vorhanden. Deine Wallet ist bereit für das Angebot vom Rechner.')]);
+      : [el('section', { class: 'card empty-state wallet-empty' },
+        el('div', { class: 'wallet-outline', 'aria-hidden': 'true' }),
+        el('h2', {}, 'Noch keine Ausweise'),
+        el('p', {}, 'Deine Wallet ist eingerichtet. Scanne den Ausstellungs-QR auf deinem Notebook, um deinen Mitarbeiterausweis zu erhalten.'))]);
   show(null);
   try {
     const issuers = await api('/issuers');
@@ -298,7 +308,10 @@ async function render() {
     if (version !== renderVersion) return;
     if (!root.querySelector('.card')) root.replaceChildren(el('section', { class: 'card' },
       el('h2', {}, 'Gerade nicht möglich'),
-      el('p', {}, 'Prüfe, ob dein Issuer und sein Tunnel laufen. Bei einer neuen Tunnel-Adresse: Issuer neu anmelden und den QR erneut scannen.'),
+      el('p', {}, location.hash.startsWith('#offer=')
+        ? 'Prüfe, ob dein Issuer und sein Tunnel laufen. Bei einer neuen Tunnel-Adresse: Issuer neu anmelden und den QR erneut scannen.'
+        : currentRequestId() ? 'Scanne den aktuellen QR am Empfang erneut, um einen neuen persönlichen Check-in-Versuch zu öffnen.'
+          : 'Prüfe deine Verbindung zur Workshop-Zentrale. Gespeicherte Ausweise bleiben in diesem Browser erhalten.'),
       action(el('button', { type: 'button', class: 'secondary' }, 'Erneut versuchen'), render),
       action(el('button', { type: 'button', class: 'secondary' }, 'Zur Wallet'), goHome)));
     throw error;

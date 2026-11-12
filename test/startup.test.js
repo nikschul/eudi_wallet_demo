@@ -23,7 +23,7 @@ async function unusedPort() {
 
 async function start(t, directory, port) {
   const env = { ...process.env };
-  for (const key of ['PORT', 'PUBLIC_URL', 'ADMIN_TOKEN', 'TRUST_MODE', 'DATA_DIR', 'APP_ROLE', 'WORKSHOP_URL']) delete env[key];
+  for (const key of ['PORT', 'HOST_PORT', 'PUBLIC_URL', 'TRUST_MODE', 'DATA_DIR', 'APP_ROLE', 'WORKSHOP_URL']) delete env[key];
   const child = spawn(process.execPath, [`--env-file=${path.join(directory, '.env')}`, entrypoint], {
     cwd: tmpdir(), env, stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -45,9 +45,12 @@ async function start(t, directory, port) {
   }
   const base = `http://127.0.0.1:${port}`;
   assert.equal((await fetch(`${base}/api/health`)).status, 200);
-  assert.match(output, /Admin-Token aus der Umgebung/);
+  const adminToken = output.match(/Admin-Token: ([A-Za-z0-9_-]{43})/u)?.[1];
+  assert.ok(adminToken, output);
+  assert.match(output, /privater Freischalt-Link/);
+  assert.ok(output.includes(`#admin-token=${adminToken}`));
   return {
-    base,
+    base, adminToken, output,
     async stop() {
       const exited = once(child, 'exit');
       child.kill('SIGTERM');
@@ -64,7 +67,7 @@ test('Configured server starts outside the project directory, stops cleanly and 
   t.after(() => rm(directory, { recursive: true, force: true }));
   const port = await unusedPort();
   await writeFile(path.join(directory, '.env'), [
-    `PORT=${port}`, 'TRUST_MODE=manual', 'ADMIN_TOKEN=startup-test',
+    `PORT=${port}`, 'TRUST_MODE=manual',
     `DATA_DIR="${path.join(directory, 'data')}"`,
   ].join('\n'));
   const server = await start(t, directory, port);
@@ -84,11 +87,35 @@ test('Configured server starts outside the project directory, stops cleanly and 
   assert.equal(registered.status, 201);
   await server.stop();
   const restarted = await start(t, directory, port);
+  assert.notEqual(restarted.adminToken, server.adminToken);
+  const session = (token) => fetch(`${restarted.base}/api/admin/session`, {
+    headers: { 'X-Admin-Token': token },
+  });
+  assert.equal((await session(server.adminToken)).status, 401);
+  assert.equal((await session(restarted.adminToken)).status, 200);
   const issuers = await (await fetch(`${restarted.base}/api/issuers`)).json();
   assert.equal(issuers[0].did, issuer.did);
   assert.equal(issuers[0].trusted, false);
   assert.equal((await fetch(`${restarted.base}/wallet.html`)).status, 200);
   await restarted.stop();
+});
+
+test('Issuer startup prints private local and public unlock links without env secrets', { timeout: 15000 }, async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'eudi-issuer-startup-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const port = await unusedPort();
+  await writeFile(path.join(directory, '.env'), [
+    `PORT=${port}`, 'HOST_PORT=3001', 'APP_ROLE=issuer', 'PUBLIC_URL=https://issuer.example.org',
+    'WORKSHOP_URL=https://workshop.example.org', `DATA_DIR="${path.join(directory, 'data')}"`,
+  ].join('\n'));
+  const server = await start(t, directory, port);
+  assert.ok(server.output.includes(`http://localhost:3001/issuer.html#admin-token=${server.adminToken}`));
+  assert.ok(server.output.includes(`https://issuer.example.org/issuer.html#admin-token=${server.adminToken}`));
+  assert.equal((await fetch(`${server.base}/api/issuer/status`)).status, 401);
+  assert.equal((await fetch(`${server.base}/api/issuer/session`, {
+    headers: { 'X-Admin-Token': server.adminToken },
+  })).status, 200);
+  await server.stop();
 });
 
 test('Invalid ports exit with a configuration error', { timeout: 10000 }, async () => {

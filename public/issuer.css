@@ -18,14 +18,13 @@
 .issuer-brand { display: flex; align-items: center; gap: .85rem; color: white; text-decoration: none; font-weight: 750; }
 .issuer-brand small { display: block; font-size: .78rem; font-weight: 400; opacity: .85; margin-top: .2rem; }
 .issuer-mark { display: grid; place-items: center; width: 2.8rem; height: 2.8rem; background: #fff; color: #123c7b; border-radius: .4rem; font-size: 1.5rem; }
-.issuer-badge { border: 1px solid #82b0ec; padding: .45rem .8rem; border-radius: .4rem; font-size: .85rem; }
 .issuer-shell { width: min(1280px, calc(100% - 3rem)); margin: 2.5rem auto; }
 .page-heading { max-width: 860px; margin-bottom: 2rem; }
 .page-heading h1 { font-size: clamp(1.8rem, 3.2vw, 2.7rem); line-height: 1.15; margin: .5rem 0 1rem; }
 .issuer-dashboard .eyebrow { color: #174f9c; }
 .issuer-dashboard .card { border: 1px solid #cfdaeb; border-top: 4px solid #b3c9e8; border-radius: .65rem; box-shadow: 0 3px 14px #183e7010; padding: 1.5rem; }
 .dashboard-grid { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); align-items: start; gap: 1.5rem; }
-.dashboard-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.demo-warning { padding: .85rem 1rem; margin-bottom: 1.5rem; border: 1px solid #d5b46d; border-radius: .4rem; background: #fff6df; color: #6b4810; }
 .issuer-dashboard .stack { gap: 1.2rem; }
 .issuer-dashboard button, .issuer-dashboard .button { background: #174f9c; border-color: #174f9c; color: white; border-radius: .4rem; }
 .issuer-dashboard button:hover, .issuer-dashboard .button:hover { background: #123c7b; }
@@ -37,7 +36,6 @@
 .issuer-dashboard .notice { background: #edf4ff; color: #163d77; border-color: #adc8ed; }
 .issuer-dashboard a { color: #174f9c; }
 .issuer-header a { color: white; }
-.login-card { max-width: 620px; margin: 0 auto; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
 .actions { display: flex; gap: .75rem; flex-wrap: wrap; }
 .workflow { padding-left: 1.3rem; }
@@ -57,12 +55,9 @@
 .issuer-dashboard [hidden] { display: none !important; }
 @media (max-width: 850px) {
   .dashboard-grid, .transfer-grid { grid-template-columns: 1fr; }
-  .issuer-badge { display: none; }
   .issuer-shell { width: calc(100% - 2rem); margin: 1.5rem auto; }
-  .dashboard-toolbar { align-items: start; }
 }
 @media (max-width: 480px) {
   .form-grid { grid-template-columns: 1fr; }
-  .dashboard-toolbar { flex-direction: column; }
   .issuer-header { padding: 1rem; }
 }

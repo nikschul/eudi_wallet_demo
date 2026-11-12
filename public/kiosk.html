@@ -18,7 +18,7 @@
   </header>
   <main class="kiosk-layout">
     <section class="kiosk-main">
-      <div><span class="eyebrow">Dein Mitarbeiterausweis. Sicher vorgezeigt.</span><h1>Check-in mit der<br>EUDI Wallet</h1></div>
+      <div><h1>Check-in</h1><p>Mitarbeiterausweis mit der Wallet vorzeigen</p></div>
       <div id="error" class="message error" role="alert" hidden></div>
       <div id="notice" class="message notice" role="status" hidden></div>
       <div id="qr-stage" class="qr-stage">
@@ -27,21 +27,26 @@
         <ol class="kiosk-instructions"><li>Kamera öffnen</li><li>QR-Code scannen</li><li>Angaben freigeben</li></ol>
       </div>
       <div id="kiosk-result" class="kiosk-result" role="status" hidden></div>
-      <aside class="onboarding-qr"><img id="start-qr" width="112" height="112" alt="QR-Code zur Startseite" hidden><div><strong>Noch keine Wallet?</strong><p>Hier starten. In drei Schritten dabei.</p><span id="public-url" class="muted"></span></div></aside>
+      <aside class="onboarding-qr"><img id="start-qr" width="88" height="88" alt="QR-Code zur Startseite" hidden><div><strong>Wallet öffnen</strong><p>Für die Ersteinrichtung auf dem Handy</p><span id="public-url" class="muted"></span></div></aside>
     </section>
     <aside class="kiosk-sidebar">
-      <section class="card verification-panel">
-        <span class="eyebrow">Echte Kryptografie · Verständlich erklärt</span>
-        <h2>Was der Empfang gerade geprüft hat</h2>
-        <div id="verification"><p class="muted">Beim ersten Check-in siehst du hier alle Prüfschritte – von der Signatur bis zum Replay-Schutz.</p></div>
-        <div data-explain="verify"></div>
+      <section class="card progress-panel">
+        <h2>Workshop-Fortschritt</h2>
+        <div id="progress-stats" class="progress-stats" aria-live="polite"></div>
+        <ul id="progress-list" class="progress-list"><li class="muted">Noch kein Issuer registriert.</li></ul>
+      </section>
+      <section class="card activity-panel">
+        <div class="card-top"><h2>Check-in-Versuche</h2><span id="attempt-count" class="count">0</span></div>
+        <p class="muted list-hint">Letzte 100 Versuche seit Serverstart. Aufklappen für alle Prüfschritte.</p>
+        <ul id="attempts" class="attempt-list"><li class="muted">Noch keine Prüfungen seit Serverstart. Mehrere Handys können denselben QR scannen.</li></ul>
+        <details class="verification-help"><summary>Wie wird geprüft?</summary><div data-explain="verify"></div></details>
       </section>
       <section class="card attendees-panel">
         <div class="card-top"><h2>Heute eingecheckt</h2><span id="attendee-count" class="count">0</span></div>
         <p class="muted list-hint">Einträge aufklappen: Welche Ausweise haben welche Angaben geteilt? Nicht freigegebene Felder kennt der Empfang nicht.</p>
         <ul id="attendees" class="attendee-list"><li class="muted">Der erste Gast bist vielleicht du.</li></ul>
       </section>
-      <p class="kiosk-disclaimer">Lernsimulation · Keine amtliche EUDI Wallet</p>
+      <p class="kiosk-disclaimer">Offene Lernsimulation · Nur Demo-Daten · <a href="/admin.html">Verwaltung</a></p>
     </aside>
   </main>
 </body>

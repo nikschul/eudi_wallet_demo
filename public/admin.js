@@ -1,12 +1,29 @@
 import { el, api, steps, raw, action, formAction, run, setupPage, notify, showError } from './lib/ui.js';
+import { managementAccess } from './lib/management.js';
 
-let token = '';
 let lastIssuers;
 let refreshTimer;
-let stopped = false;
+let stopped = true;
+let unlocked = false;
+const access = managementAccess({
+  prefix: '/admin',
+  content: document.getElementById('admin-content'),
+  onUnlock: async () => {
+    unlocked = true;
+    stopped = false;
+    lastIssuers = undefined;
+    await watch();
+  },
+  onLock: () => {
+    unlocked = false;
+    stopped = true;
+    clearTimeout(refreshTimer);
+    document.getElementById('issuers').replaceChildren();
+    document.getElementById('replay-result').replaceChildren();
+  },
+});
 function admin(route, body) {
-  if (!token) throw new Error('Bitte gib zuerst das Admin-Token der Workshop-Zentrale ein, nicht das Token eines Issuers.');
-  return api(`/admin${route}`, { body, token });
+  return access.request(route, { body });
 }
 
 async function refresh(force = false) {
@@ -27,7 +44,7 @@ async function refresh(force = false) {
       const ownerName = data.get('ownerName').trim();
       if (!ownerName) throw new Error('Trage zuerst ein, zu welcher Person dieser Issuer gehört.');
       await admin(`/issuers/${encodeURIComponent(issuer.did)}/trust`, { trusted: true, ownerName });
-      notify(`Der Empfang vertraut jetzt dem Issuer von ${ownerName}. Bitte einen neuen Check-in-QR scannen.`);
+      notify(`Der Empfang vertraut jetzt dem Issuer von ${ownerName}. Bitte den Kiosk-QR erneut scannen.`);
       await refresh(true);
     });
     const revoke = action(el('button', { type: 'button', class: 'secondary danger', disabled: !issuer.trusted }, 'Vertrauen entziehen'), async () => {
@@ -53,26 +70,14 @@ async function refresh(force = false) {
 
 async function watch() {
   if (stopped) return;
-  try { await refresh(); } catch (error) { showError(error); }
+  try {
+    await access.request('/session');
+    if (!stopped) await refresh();
+  } catch (error) { showError(error); }
   if (!stopped) refreshTimer = setTimeout(watch, 5000);
 }
 
 run(async () => {
-  try {
-    token = sessionStorage.getItem('adminToken') || '';
-    document.getElementById('token').value = token;
-  } catch (error) {
-    showError(new Error('Das Token kann hier nicht für die Sitzung gespeichert werden. Du kannst es trotzdem eingeben.', { cause: error }));
-  }
-  formAction(document.getElementById('token-form'), async (data) => {
-    token = data.get('token').trim();
-    if (!token) throw new Error('Bitte gib ein Admin-Token ein.');
-    try { sessionStorage.setItem('adminToken', token); } catch (error) {
-      throw new Error('Das Token gilt für diese Seite, konnte aber nicht für die Sitzung gespeichert werden.', { cause: error });
-    }
-    notify('Token übernommen. Bei der nächsten Freigabe wird es geprüft.');
-    await refresh(true);
-  });
   action(document.getElementById('refresh'), () => refresh(true));
   action(document.getElementById('replay'), async () => {
     const result = await admin('/replay', {});
@@ -85,9 +90,9 @@ run(async () => {
     notify('Check-ins und Anfragen geleert.');
   });
   await setupPage();
-  await watch();
+  await access.start();
 });
 window.addEventListener('pagehide', () => { stopped = true; clearTimeout(refreshTimer); });
 window.addEventListener('pageshow', (event) => {
-  if (event.persisted) { stopped = false; run(watch); }
+  if (event.persisted && unlocked) { stopped = false; run(watch); }
 });

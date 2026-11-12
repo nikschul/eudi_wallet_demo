@@ -25,13 +25,13 @@ async function listen(t, app, number) {
   return server;
 }
 
-async function json(base, route, { body, token, offerToken, origin } = {}) {
+async function json(base, route, { body, offerToken, adminToken, origin } = {}) {
   const response = await fetch(`${base}/api${route}`, {
     method: body === undefined ? 'GET' : 'POST',
     headers: {
       ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
-      ...(token ? { 'X-Admin-Token': token } : {}),
       ...(offerToken ? { 'X-Offer-Token': offerToken } : {}),
+      ...(adminToken ? { 'X-Admin-Token': adminToken } : {}),
       ...(origin ? { Origin: origin } : {}),
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -46,13 +46,15 @@ test('Independent issuer issues to a phone wallet, moderator grants trust, kiosk
   const issuerPort = await port();
   const hub = `http://127.0.0.1:${hubPort}`;
   const issuer = `http://127.0.0.1:${issuerPort}`;
-  await listen(t, (await createApp({
-    publicUrl: hub, adminToken: 'hub-token', dataDirectory: path.join(directory, 'hub'),
-  })).app, hubPort);
-  const issuerServer = await listen(t, (await createIssuerApp({
-    publicUrl: issuer, workshopUrl: hub, adminToken: 'issuer-token', dataDirectory: path.join(directory, 'issuer'),
-  })).app, issuerPort);
-  const management = (route, body) => json(issuer, `/issuer${route}`, { body, token: 'issuer-token' });
+  const hubApp = await createApp({
+    publicUrl: hub, dataDirectory: path.join(directory, 'hub'),
+  });
+  await listen(t, hubApp.app, hubPort);
+  const issuerApp = await createIssuerApp({
+    publicUrl: issuer, workshopUrl: hub, dataDirectory: path.join(directory, 'issuer'),
+  });
+  const issuerServer = await listen(t, issuerApp.app, issuerPort);
+  const management = (route, body) => json(issuer, `/issuer${route}`, { body, adminToken: issuerApp.adminToken });
   assert.ok([200, 201].includes((await management('/setup', { name: 'Erikas Ausweisstelle', employeeName: 'Erika Müller' })).status));
   const registered = await management('/register', {});
   assert.ok([200, 201].includes(registered.status), JSON.stringify(registered.data));
@@ -93,23 +95,22 @@ test('Independent issuer issues to a phone wallet, moderator grants trust, kiosk
   assert.equal((await remote('/credential', { proof: await makeProof() })).data.sdjwt, received.data.sdjwt);
   await new Promise((resolve) => issuerServer.close(resolve));
 
+  const kiosk = (await json(hub, '/requests', { body: { mode: 'kiosk' } })).data;
   async function checkIn(reveal = ['given_name', 'family_name']) {
-    const requestId = (await json(hub, '/requests', { body: {} })).data.id;
-    const request = (await json(hub, `/requests/${requestId}`)).data;
+    const session = await json(hub, `/requests/${kiosk.id}/sessions`, { body: {} });
+    assert.equal(session.status, 201);
+    const request = session.data;
     const presentation = await sd.createPresentation({
       sdjwt: received.data.sdjwt, reveal, holderPrivateJwk: wallet.privateJwk, aud: request.aud, nonce: request.nonce,
     });
-    return json(hub, `/requests/${requestId}/response`, { body: { presentation } });
+    return json(hub, `/requests/${request.id}/response`, { body: { presentation } });
   }
   const denied = await checkIn();
   assert.equal(denied.data.ok, false);
   assert.match(denied.data.error, /Vertrauensliste/);
   const approvalPath = `/admin/issuers/${encodeURIComponent(identity.did)}/trust`;
   assert.equal((await json(hub, approvalPath, {
-    token: 'issuer-token', body: { trusted: true, ownerName: 'Erika Müller' },
-  })).status, 401);
-  assert.equal((await json(hub, approvalPath, {
-    token: 'hub-token', body: { trusted: true, ownerName: 'Erika Müller' },
+    body: { trusted: true, ownerName: 'Erika Müller' }, adminToken: hubApp.adminToken,
   })).status, 200);
   const checked = await checkIn();
   assert.equal(checked.data.ok, true, checked.data.error);
@@ -126,4 +127,13 @@ test('Independent issuer issues to a phone wallet, moderator grants trust, kiosk
   assert.equal(attendee.checkins[0].credentialId, attendee.checkins[1].credentialId);
   assert.equal(JSON.stringify(attendee).includes('sdjwt'), false);
   assert.equal(JSON.stringify(attendee).includes('privateJwk'), false);
+  const dashboard = (await json(hub, '/dashboard')).data;
+  assert.deepEqual(dashboard.stats, { registered: 1, trusted: 1, checkedIn: 1 });
+  assert.equal(dashboard.attempts.length, 3);
+  assert.equal(dashboard.attempts.filter((attempt) => attempt.identityVerified).length, 2);
+  const failed = dashboard.attempts.find((attempt) => attempt.status === 'error');
+  assert.equal(failed.name, 'Erika Müller');
+  assert.equal(failed.failedAt, 'Issuer-Vertrauen');
+  assert.equal(JSON.stringify(dashboard).includes('Geheime Demo-Organisation'), false);
+  assert.equal((await json(hub, `/requests/${kiosk.id}`)).data.status, 'pending');
 });

@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url';
 
 const port = Number(process.env.PORT || 3000);
 if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT muss zwischen 1 und 65535 liegen.');
+const localPort = Number(process.env.HOST_PORT || port);
+if (!Number.isInteger(localPort) || localPort < 1 || localPort > 65535) throw new Error('HOST_PORT muss zwischen 1 und 65535 liegen.');
 const publicUrl = process.env.PUBLIC_URL || `http://localhost:${port}`;
 const role = process.env.APP_ROLE || 'workshop';
 if (!['workshop', 'issuer'].includes(role)) throw new Error('APP_ROLE muss workshop oder issuer sein.');
@@ -12,7 +14,6 @@ const { app, adminToken } = await factory({
   publicUrl,
   workshopUrl: process.env.WORKSHOP_URL,
   trustMode: process.env.TRUST_MODE || 'manual',
-  adminToken: process.env.ADMIN_TOKEN || undefined,
   verifierName: process.env.VERIFIER_NAME || undefined,
   eventTitle: process.env.EVENT_TITLE || undefined,
   dataDirectory: process.env.DATA_DIR || fileURLToPath(new URL('../data/', import.meta.url)),
@@ -20,9 +21,17 @@ const { app, adminToken } = await factory({
 const server = app.listen(port, '0.0.0.0', () => {
   console.log(`EUDI-Demo: ${publicUrl}`);
   console.log(`Rolle: ${role === 'issuer' ? 'Eigene Ausweisstelle' : 'Workshop-Zentrale'}`);
-  console.log(role === 'issuer' ? `Ausweisstelle: http://localhost:${port}/issuer.html` : `Kiosk: ${publicUrl}/kiosk.html`);
-  if (!process.env.ADMIN_TOKEN) console.log(`Zufälliges Admin-Token: ${adminToken}`);
-  else console.log('Admin-Token aus der Umgebung geladen.');
+  console.log(role === 'issuer' ? `Ausweisstelle: http://localhost:${localPort}/issuer.html` : `Kiosk: ${publicUrl}/kiosk.html`);
+  const managementPath = role === 'issuer' ? '/issuer.html' : '/admin.html';
+  const unlockLink = (base) => {
+    const url = new URL(managementPath, base);
+    url.hash = `admin-token=${adminToken}`;
+    return url.href;
+  };
+  console.log(`Verwaltung lokal (privater Freischalt-Link): ${unlockLink(`http://localhost:${localPort}`)}`);
+  console.log(`Verwaltung per Tunnel (privater Freischalt-Link): ${unlockLink(publicUrl)}`);
+  console.log(`Admin-Token: ${adminToken}`);
+  console.log('Freischalt-Link und Token geheim halten. Bei jedem Serverstart neu; keine Env-Einrichtung nötig. Nur Demo-Daten verwenden.');
   const url = new URL(publicUrl);
   if (url.protocol !== 'https:' && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) {
     console.warn('Smartphones benötigen HTTPS für WebCrypto. Bitte PUBLIC_URL auf die öffentliche HTTPS-Adresse setzen.');

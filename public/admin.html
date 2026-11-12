@@ -16,24 +16,18 @@
     <nav aria-label="Hauptnavigation"><a href="/kiosk.html">Empfang</a><a href="/wallet.html">Wallet</a></nav>
   </header>
   <main class="shell admin-shell">
-    <span class="eyebrow">Workshop-Zentrale / Moderation</span><h1>Vertrauen ist eine Entscheidung.</h1>
+    <h1>Workshop-Verwaltung</h1>
     <div id="error" class="message error" role="alert" hidden></div>
     <div id="notice" class="message notice" role="status" hidden></div>
-    <section class="card">
-      <h2>Admin-Token</h2>
-      <p class="muted">Das Token kommt aus der Server-Konsole oder der Deployment-Konfiguration. Es bleibt nur für diese Browser-Sitzung gespeichert.</p>
-      <form id="token-form" class="inline-form">
-        <label class="field grow">Admin-Token<input id="token" name="token" type="password" required autocomplete="off"></label>
-        <button type="submit">Token übernehmen</button>
-      </form>
-    </section>
+    <p class="message warning">Nur Demo-Daten verwenden. Den privaten Freischalt-Link und Admin-Token nicht an Teilnehmende weitergeben; den Tunnel nach dem Workshop beenden.</p>
+    <div id="admin-content" class="stack" hidden>
     <section class="card">
       <h2>Die Vertrauensliste im Workshop</h2>
       <ol class="guided-list">
         <li><strong>Anmelden:</strong> Mitarbeitende hosten ihren eigenen Issuer und beweisen den Besitz des Ausstellerschlüssels.</li>
         <li><strong>Zuordnen:</strong> Vergleiche den Fingerabdruck mit dem Bildschirm der Person und trage ihren Namen ein. Ein selbst gewählter Issuer-Name beweist keine Identität.</li>
         <li><strong>Bewusst vertrauen:</strong> Erteile die Freigabe. Der Empfang akzeptiert nur diesen konkreten Schlüssel, keine beliebige Cloudflare-Domain.</li>
-        <li><strong>Den Unterschied erleben:</strong> Erst mit nicht freigegebenem Issuer einchecken lassen, dann freigeben. Derselbe Ausweis funktioniert am neuen Check-in-QR.</li>
+        <li><strong>Freigabe prüfen:</strong> Erst mit nicht freigegebenem Issuer einchecken lassen, dann freigeben. Beim erneuten Scan des Kiosk-QR funktioniert derselbe Ausweis.</li>
       </ol>
       <p id="trust-summary" class="message notice" role="status"></p>
       <div data-explain="trust"></div>
@@ -45,7 +39,7 @@
       <p id="empty" class="muted" hidden>Noch keine Issuer registriert.</p>
     </section>
     <section class="card">
-      <h2>Kryptografie live erklären</h2>
+      <h2>Replay-Schutz testen</h2>
       <p>Eine bereits verwendete Presentation wird gegen eine neue Nonce geprüft. Der Empfang muss den Replay-Angriff ablehnen.</p>
       <button id="replay" type="button">Replay-Angriff vorführen</button>
       <div id="replay-result" aria-live="polite"></div>
@@ -56,6 +50,7 @@
       <p>Leert alle Check-ins und laufenden Anfragen. Die registrierten Issuer bleiben erhalten.</p>
       <button id="reset" type="button" class="secondary danger">Check-in-Liste leeren</button>
     </section>
+    </div>
   </main>
 </body>
 </html>

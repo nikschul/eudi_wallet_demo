@@ -1,11 +1,11 @@
 import express from 'express';
 import QRCode from 'qrcode';
-import { timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
 import * as sd from '../public/lib/sdjwt.js';
 import { createStore } from './store.js';
 import { walletIcon } from './icons.js';
+import { managementAuth } from './management-auth.js';
 import { EMPLOYEE_VCT, REGISTRATION_PROOF, publicOrigin, verifyProof, validatePublicJwk } from '../public/lib/protocol.js';
 
 const publicDirectory = fileURLToPath(new URL('../public/', import.meta.url));
@@ -38,22 +38,18 @@ function text(value, label, max = 120) {
 export async function createApp({
   publicUrl = 'http://localhost:3000',
   trustMode = 'manual',
-  adminToken = sd.b64url(crypto.getRandomValues(new Uint8Array(32))),
   verifierName = 'Fraunhofer ISST – Empfang',
   eventTitle = 'EUDI Wallet Workshop',
   dataDirectory = defaultDataDirectory,
   clock = () => Date.now(),
 } = {}) {
   if (trustMode !== 'manual') throw new Error('Im Workshop werden Issuer ausschließlich durch die Moderation freigegeben (TRUST_MODE=manual).');
-  if (typeof adminToken !== 'string' || !adminToken.trim() || adminToken !== adminToken.trim()
-    || /[^\x21-\x7e]/.test(adminToken)) {
-    throw new Error('ADMIN_TOKEN muss aus druckbaren ASCII-Zeichen ohne Leerzeichen bestehen.');
-  }
   publicUrl = publicOrigin(publicUrl, 'PUBLIC_URL');
   const startQrDataUrl = await QRCode.toDataURL(`${publicUrl}/`, { width: 256, margin: 4 });
   const store = createStore(dataDirectory);
   const requests = new Map();
   const challenges = new Map();
+  const attempts = [];
   let lastPresentation = null;
   const seconds = () => Math.floor(clock() / 1000);
   const app = express();
@@ -75,14 +71,16 @@ export async function createApp({
     res.set('Cache-Control', 'no-store');
     next();
   });
+  const adminToken = managementAuth(app, '/api/admin');
   app.use(express.json({ limit: '64kb', strict: true }));
 
-  function newRequest() {
+  function newRequest(mode = 'single') {
     for (const [id, request] of requests) {
       if (seconds() - request.createdAt > 1800) requests.delete(id);
     }
     const request = {
       id: crypto.randomUUID(),
+      mode,
       nonce: sd.b64url(crypto.getRandomValues(new Uint8Array(16))),
       aud: 'isst-empfang',
       verifierName,
@@ -120,13 +118,19 @@ export async function createApp({
         return issuer?.trusted === true && issuer.proofVerified === true && Boolean(issuer.ownerName);
       },
     });
+    if (!result.ok) {
+      result.failedAt = ['Nachweis lesen', 'Issuer-Vertrauen', 'Issuer-Signatur', 'Gültigkeit',
+        'Geteilte Angaben', 'Wallet-Bindung', 'Nonce und Empfänger'][Math.min(result.steps.length, 6)];
+    }
     if (result.ok && result.vct !== request.vct) {
       result.ok = false;
+      result.failedAt = 'Nachweistyp';
       result.error = 'Dieser Nachweis ist kein passender Mitarbeiterausweis. Bitte hole einen neuen Ausweis von deinem eigenen Issuer.';
     }
     if (result.ok && request.required.some((field) => typeof result.claims[field] !== 'string'
       || !result.claims[field].trim() || result.claims[field].length > 120)) {
       result.ok = false;
+      result.failedAt = 'Pflichtangaben';
       result.error = 'Die erforderlichen Angaben Vorname und Nachname fehlen oder sind ungültig.';
     }
     if (result.ok && Object.entries(result.claims).some(([field, value]) => (
@@ -134,7 +138,8 @@ export async function createApp({
       || typeof value !== 'string' || value.length > 120
     ))) {
       result.ok = false;
-      result.error = 'Der Gastausweis enthält unerwartete oder ungültige Angaben.';
+      result.failedAt = 'Geteilte Angaben';
+      result.error = 'Der Mitarbeiterausweis enthält unerwartete oder ungültige Angaben.';
     }
     if (result.ok) {
       const issuer = store.getIssuer(result.issuer);
@@ -143,6 +148,27 @@ export async function createApp({
       result.credentialId = await sd.sha256b64(sd.parseSdJwt(presentation).jwt);
     }
     return result;
+  }
+
+  function startAttempt(request, presentation) {
+    const attempt = {
+      id: request.id, name: 'Unbekannte Wallet', identityVerified: false,
+      issuerName: 'Unbekannter Issuer', time: new Date(clock()).toISOString(),
+      status: 'processing', steps: [],
+    };
+    try {
+      const { payload, claims } = sd.describeCredential(presentation);
+      if (['given_name', 'family_name'].every((key) => typeof claims[key] === 'string'
+        && claims[key].trim() && claims[key].length <= 120)) {
+        attempt.name = `${claims.given_name.trim()} ${claims.family_name.trim()}`;
+      }
+      attempt.issuerName = store.getIssuer(payload.iss)?.name || 'Unbekannter Issuer';
+    } catch {
+      attempt.identityNote = 'Der Name konnte nicht aus dem Nachweis gelesen werden.';
+    }
+    attempts.unshift(attempt);
+    attempts.splice(100);
+    return attempt;
   }
 
   app.get('/api/health', (req, res) => res.json({ ok: true, role: 'workshop' }));
@@ -207,11 +233,24 @@ export async function createApp({
   }));
 
   app.post('/api/requests', wrap(async (req, res) => {
-    const request = newRequest();
+    requireBody(req.body, ['mode']);
+    if (req.body.mode !== undefined && req.body.mode !== 'kiosk') throw new HttpError(400, 'Unbekannter Check-in-Modus.');
+    const request = newRequest(req.body.mode);
     const url = `${publicUrl}/wallet.html#req=${request.id}`;
     const qrDataUrl = await QRCode.toDataURL(url, { width: 640, margin: 4, errorCorrectionLevel: 'M' });
     res.status(201).json({ id: request.id, url, qrDataUrl });
   }));
+  app.post('/api/requests/:id/sessions', (req, res, next) => {
+    try {
+      requireBody(req.body, []);
+      const parent = findRequest(req.params.id);
+      requirePending(parent);
+      if (parent.mode !== 'kiosk') throw new HttpError(400, 'Nur ein Kiosk-QR kann persönliche Check-in-Anfragen öffnen.');
+      res.status(201).json(newRequest());
+    } catch (error) {
+      next(error);
+    }
+  });
   app.get('/api/requests/:id', (req, res, next) => {
     try {
       res.json(findRequest(req.params.id));
@@ -222,10 +261,12 @@ export async function createApp({
   app.post('/api/requests/:id/response', wrap(async (req, res) => {
     const request = findRequest(req.params.id);
     requirePending(request);
+    if (request.mode === 'kiosk') throw new HttpError(409, 'Bitte öffne zuerst eine persönliche Check-in-Anfrage über den Kiosk-QR.');
     requireBody(req.body, ['presentation']);
     const presentation = text(req.body.presentation, 'Die Presentation', 60000);
     // Reserve before the first await: two phones must not consume the same nonce.
     request.status = 'processing';
+    const attempt = startAttempt(request, presentation);
     try {
       const result = await checkPresentation(request, presentation);
       if (requests.get(request.id) !== request) {
@@ -245,22 +286,35 @@ export async function createApp({
       }
       request.result = result;
       request.status = result.ok ? 'done' : 'error';
+      Object.assign(attempt, {
+        status: request.status, identityVerified: result.ok,
+        steps: result.steps, error: result.error, failedAt: result.failedAt,
+      });
       res.json(result);
     } catch (error) {
       request.status = 'error';
       request.result = { ok: false, steps: [], error: 'Der Check-in konnte nicht gespeichert werden. Bitte wende dich an den Empfang.' };
+      Object.assign(attempt, {
+        status: 'error', steps: [], error: request.result.error, failedAt: 'Check-in speichern',
+      });
       throw error;
     }
   }));
   app.get('/api/attendees', (req, res) => res.json(store.listAttendees()));
 
-  app.use('/api/admin', (req, res, next) => {
-    const provided = Buffer.from(req.get('X-Admin-Token') || '');
-    const expected = Buffer.from(adminToken);
-    if (provided.length !== expected.length || !timingSafeEqual(provided, expected)) {
-      return next(new HttpError(401, 'Das Admin-Token fehlt oder ist ungültig.'));
-    }
-    next();
+  app.get('/api/dashboard', (req, res) => {
+    const checkins = store.listAttendees().flatMap((person) => person.checkins || []);
+    const issuers = store.listIssuers().map((issuer) => ({
+      ...issuer, checkinCount: checkins.filter((checkin) => checkin.issuerDid === issuer.did).length,
+    }));
+    res.json({
+      issuers, attempts,
+      stats: {
+        registered: issuers.length,
+        trusted: issuers.filter((issuer) => issuer.trusted && issuer.proofVerified && issuer.ownerName).length,
+        checkedIn: issuers.filter((issuer) => issuer.checkinCount > 0).length,
+      },
+    });
   });
   app.post('/api/admin/issuers/:did/trust', (req, res, next) => {
     try {
@@ -300,6 +354,7 @@ export async function createApp({
     try {
       store.clearAttendees();
       requests.clear();
+      attempts.length = 0;
       lastPresentation = null;
       res.json({ ok: true });
     } catch (error) {

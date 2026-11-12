@@ -8,8 +8,8 @@ services:
     environment:
       APP_ROLE: workshop
       PORT: "3000"
+      HOST_PORT: ${PORT:-3000}
       PUBLIC_URL: ${PUBLIC_URL:-http://localhost:${PORT:-3000}}
-      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
       VERIFIER_NAME: ${VERIFIER_NAME:-Fraunhofer ISST – Empfang}
       EVENT_TITLE: ${EVENT_TITLE:-EUDI Wallet Workshop}
     ports:

@@ -49,7 +49,7 @@ export class ApiError extends Error {
   }
 }
 
-export async function api(route, { body, token, offerToken, baseUrl = '', timeoutMs = 15000 } = {}) {
+export async function api(route, { body, offerToken, adminToken, baseUrl = '', timeoutMs = 15000 } = {}) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -60,8 +60,8 @@ export async function api(route, { body, token, offerToken, baseUrl = '', timeou
         headers: {
           Accept: 'application/json',
           ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
-          ...(token ? { 'X-Admin-Token': token } : {}),
           ...(offerToken ? { 'X-Offer-Token': offerToken } : {}),
+          ...(adminToken ? { 'X-Admin-Token': adminToken } : {}),
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         cache: 'no-store',

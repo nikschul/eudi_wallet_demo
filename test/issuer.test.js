@@ -11,7 +11,6 @@ import {
   EMPLOYEE_VCT, HOLDER_PROOF, REGISTRATION_PROOF, decodeOffer, signProof, verifyProof,
 } from '../public/lib/protocol.js';
 
-const adminToken = 'issuer-test-admin-token';
 const claims = { given_name: 'Erika', family_name: 'Muster', organisation: 'Workshop GmbH', role: 'Mitarbeitende' };
 
 async function listen(app) {
@@ -27,12 +26,11 @@ async function close(server) {
   });
 }
 
-async function request(url, route, { body, token, admin = false, method, headers = {} } = {}) {
+async function request(url, route, { body, token, method, headers = {} } = {}) {
   const response = await fetch(url + route, {
     method: method || (body === undefined ? 'GET' : 'POST'),
     headers: {
       ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
-      ...(admin ? { 'X-Admin-Token': adminToken } : {}),
       ...(token ? { 'X-Offer-Token': token } : {}), ...headers,
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -96,11 +94,13 @@ async function fixture(t) {
   const wrapper = express();
   const issuer = await listen(wrapper);
   t.after(() => close(issuer.server));
-  const options = { publicUrl: issuer.url, workshopUrl, adminToken, dataDirectory, clock: () => now };
+  const options = { publicUrl: issuer.url, workshopUrl, dataDirectory, clock: () => now };
   const created = await createIssuerApp(options);
   wrapper.use(created.app);
   const call = (route, options) => request(issuer.url, route, options);
-  const admin = (route, options = {}) => call(`/api/issuer${route}`, { ...options, admin: true });
+  const admin = (route, options = {}) => call(`/api/issuer${route}`, {
+    ...options, headers: { 'X-Admin-Token': created.adminToken, ...options.headers },
+  });
   const setup = () => admin('/setup', { body: { name: 'Meine Test-Ausweisstelle', employeeName: 'Anna Ausstellung' } });
   const register = () => admin('/register', { body: {} });
   async function ready() {
@@ -128,30 +128,37 @@ function noKeys(value) {
   assert.doesNotMatch(serialized, /"(?:privateJwk|publicJwk|jwk|d|token|sdjwt)"\s*:/);
 }
 
-test('Issuer-Konfiguration, Header-Admin-Authentifizierung und sichere getrennte Seiten', async (t) => {
+test('Issuer-Konfiguration, geschützte Demo-Verwaltung und getrennte Seiten ohne Schlüsseldaten', async (t) => {
   const f = await fixture(t);
+  assert.deepEqual(Object.keys(f.created), ['app', 'adminToken']);
   assert.deepEqual((await f.call('/api/health')).data, { ok: true, role: 'issuer' });
-  assert.deepEqual((await f.call('/api/config')).data, {
+  const config = await f.call('/api/config');
+  assert.deepEqual(config.data, {
     role: 'issuer', publicUrl: f.issuerUrl, workshopUrl: f.workshopUrl, eventTitle: 'Meine Ausweisstelle',
   });
-  assert.equal((await f.call('/api/issuer/status')).status, 401);
-  assert.equal((await f.call(`/api/issuer/status?token=${adminToken}`, {
-    headers: { Authorization: `Bearer ${adminToken}`, Cookie: `adminToken=${adminToken}` },
-  })).status, 401);
-  assert.equal((await f.call('/api/issuer/setup', { body: {}, headers: { 'X-Admin-Token': 'falsch' } })).status, 401);
-  for (const route of ['/status', '/trust', '/offers/unknown']) {
+  noKeys(config.data);
+  for (const route of ['/status', '/trust']) {
     assert.equal((await f.call(`/api/issuer${route}`)).status, 401);
   }
-  for (const route of ['/setup', '/register', '/offers', '/offers/unknown/approve', '/offers/unknown/cancel']) {
+  assert.equal((await f.call('/api/issuer/setup', { body: {} })).status, 401);
+  assert.equal((await f.call('/api/issuer/register', { body: {} })).status, 401);
+  assert.equal((await f.call('/api/issuer/offers', { body: { claims } })).status, 401);
+  assert.equal((await f.call('/api/issuer/offers/unknown')).status, 401);
+  for (const route of ['/offers/unknown/approve', '/offers/unknown/cancel']) {
     assert.equal((await f.call(`/api/issuer${route}`, { body: {} })).status, 401);
   }
   const status = await f.admin('/status');
   assert.deepEqual(status.data, { publicUrl: f.issuerUrl, workshopUrl: f.workshopUrl });
+  noKeys(status.data);
   assert.equal(status.headers.get('cache-control'), 'no-store');
   for (const route of ['/', '/issuer.html']) {
     const page = await f.call(route);
     assert.equal(page.status, 200);
     assert.match(page.data, /Desktop-Verwaltung/);
+    assert.match(page.data, /Geschützte Demo-Verwaltung/);
+    assert.match(page.data, /Freischalt-Link aus den Server-Logs/);
+    assert.match(page.data, /Nur Demo-Daten verwenden/);
+    assert.doesNotMatch(page.data, /Ausstellen, nicht aufbewahren/);
     assert.doesNotMatch(page.data, /manifest\.webmanifest|wallet\.html|serviceWorker/);
     assert.match(page.headers.get('content-security-policy'), /frame-ancestors 'none'/);
     assert.match(page.headers.get('content-security-policy'), /worker-src 'none'/);
@@ -162,8 +169,9 @@ test('Issuer-Konfiguration, Header-Admin-Authentifizierung und sichere getrennte
   }
   const script = await f.call('/issuer.js');
   assert.equal(script.status, 200);
-  assert.doesNotMatch(script.data, /localStorage|setupPage|readStored|writeStored/);
-  assert.match(script.data, /sessionStorage/);
+  assert.doesNotMatch(script.data, /localStorage|sessionStorage|setupPage|readStored|writeStored|X-Admin-Token|showLogin|Verwaltung sperren/);
+  assert.doesNotMatch(script.data, /Getrennte Systeme, klarer Weg/);
+  assert.match(script.data, /sha256b64\(status\.did\)/);
 });
 
 test('Issuer speichert genau eine dauerhafte private Identität und aktualisiert Namen atomisch', async (t) => {
@@ -183,7 +191,13 @@ test('Issuer speichert genau eine dauerhafte private Identität und aktualisiert
   const restart = await createIssuerApp(f.options);
   const restarted = await listen(restart.app);
   t.after(() => close(restarted.server));
-  const loaded = await request(restarted.url, '/api/issuer/status', { admin: true });
+  assert.notEqual(restart.adminToken, f.created.adminToken);
+  assert.equal((await request(restarted.url, '/api/issuer/status', {
+    headers: { 'X-Admin-Token': f.created.adminToken },
+  })).status, 401);
+  const loaded = await request(restarted.url, '/api/issuer/status', {
+    headers: { 'X-Admin-Token': restart.adminToken },
+  });
   assert.equal(loaded.data.did, stored.did);
   const changed = await f.admin('/setup', { body: { name: 'Neue Stelle', employeeName: 'Berta' } });
   assert.equal(changed.data.did, stored.did);
@@ -450,7 +464,6 @@ test('Öffentliche Origins erfordern HTTPS außer Loopback und strikt getrennte 
     { publicUrl: 'http://issuer.example' }, { workshopUrl: 'http://192.168.1.1:3000' },
     { publicUrl: 'https://user:pass@issuer.example' }, { publicUrl: 'https://issuer.example/path' },
     { publicUrl: 'https://issuer.example#fragment' }, { workshopUrl: 'https://issuer.example' },
-    { adminToken: ' ' },
   ]) {
     await assert.rejects(createIssuerApp({ ...base, ...patch }));
   }

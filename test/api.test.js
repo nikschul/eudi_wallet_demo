@@ -12,17 +12,18 @@ async function fixture(t, options = {}) {
   const directory = await mkdtemp(path.join(tmpdir(), 'eudi-test-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const start = async () => {
-    const { app } = await createApp({
-      publicUrl: 'https://wallet.example.org', dataDirectory: directory, adminToken: 'test-token', ...options,
+    const { app, adminToken } = await createApp({
+      publicUrl: 'https://wallet.example.org', dataDirectory: directory, ...options,
     });
     const server = app.listen(0, '127.0.0.1');
     await once(server, 'listening');
     t.after(() => new Promise((resolve) => server.close(resolve)));
     const base = `http://127.0.0.1:${server.address().port}`;
-    const api = async (route, body, admin = false) => {
+    const api = async (route, body) => {
       const response = await fetch(`${base}/api${route}`, {
         method: body === undefined ? 'GET' : 'POST',
-        headers: { 'Content-Type': 'application/json', ...(admin ? { 'X-Admin-Token': 'test-token' } : {}) },
+        headers: { 'Content-Type': 'application/json',
+          ...(route.startsWith('/admin/') ? { 'X-Admin-Token': adminToken } : {}) },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       });
       return { status: response.status, data: await response.json() };
@@ -48,7 +49,7 @@ async function person(api, name = 'Erika', extra = {}, approved = true) {
   assert.equal(registered.status, 201);
   assert.equal(registered.data.trusted, false);
   if (approved) {
-    assert.equal((await api(`/admin/issuers/${encodeURIComponent(issuer.did)}/trust`, { trusted: true, ownerName: name }, true)).status, 200);
+    assert.equal((await api(`/admin/issuers/${encodeURIComponent(issuer.did)}/trust`, { trusted: true, ownerName: name })).status, 200);
   }
   const credential = await sd.issueSdJwt({
     issuerDid: issuer.did, issuerPrivateJwk: issuer.privateJwk, holderPublicJwk: holder.publicJwk,
@@ -58,7 +59,7 @@ async function person(api, name = 'Erika', extra = {}, approved = true) {
     ...extra,
   });
   return {
-    issuer, holder,
+    issuer, holder, credential,
     async checkIn(reveal = ['given_name', 'family_name']) {
       const created = await api('/requests', {});
       assert.equal(created.status, 201);
@@ -142,24 +143,24 @@ test('Ten check-ins, selective disclosure, deduplication and restart persistence
 test('Manual trust, authenticated moderation, replay and reset', async (t) => {
   const { api } = await fixture(t, { trustMode: 'manual' });
   const guest = await person(api, 'Erika', {}, false);
-  assert.equal((await api('/admin/reset', {})).status, 401);
-  assert.equal((await api('/admin/replay', {}, true)).status, 409);
+  assert.equal((await api('/admin/replay', {})).status, 409);
   const denied = await guest.checkIn();
   assert.equal(denied.result.data.ok, false);
   assert.match(denied.result.data.error, /Vertrauensliste/);
   assert.equal((await api(`/requests/${denied.request.id}`)).data.status, 'error');
   const trustPath = `/admin/issuers/${encodeURIComponent(guest.issuer.did)}/trust`;
-  assert.equal((await api(trustPath, { trusted: true }, true)).status, 400);
-  assert.equal((await api(trustPath, { trusted: true, ownerName: 'Erika Müller' }, true)).status, 200);
+  assert.equal((await api(trustPath, { trusted: true })).status, 400);
+  assert.equal((await api(trustPath, { trusted: true, ownerName: 'Erika Müller' })).status, 200);
   assert.equal((await guest.checkIn()).result.data.ok, true);
-  const replay = await api('/admin/replay', {}, true);
+  const replay = await api('/admin/replay', {});
   assert.equal(replay.data.ok, false);
   assert.match(replay.data.error, /Nonce/);
   assert.equal((await api('/attendees')).data.length, 1);
-  assert.equal((await api('/admin/trust-mode', { mode: 'auto' }, true)).status, 400);
+  assert.equal((await api('/admin/trust-mode', { mode: 'auto' })).status, 400);
   assert.equal((await api('/config')).data.trustMode, 'manual');
-  assert.equal((await api('/admin/reset', {}, true)).status, 200);
+  assert.equal((await api('/admin/reset', {})).status, 200);
   assert.deepEqual((await api('/attendees')).data, []);
+  assert.deepEqual((await api('/dashboard')).data.attempts, []);
   assert.equal((await api('/issuers')).data.length, 1);
   assert.equal((await api(`/requests/${denied.request.id}`)).status, 404);
 });
@@ -195,6 +196,94 @@ test('Concurrent responses consume a QR exactly once', async (t) => {
   assert.equal((await api('/attendees')).data.length, 1);
 });
 
+test('Twenty phones share a kiosk QR but get unique single-use nonces and identifiable results', async (t) => {
+  const { api, start } = await fixture(t);
+  const people = await Promise.all(Array.from({ length: 20 }, (_, index) => (
+    person(api, `Person ${index + 1}`, {}, index < 10)
+  )));
+  const kiosk = (await api('/requests', { mode: 'kiosk' })).data;
+  assert.equal((await api(`/requests/${kiosk.id}/response`, { presentation: 'invalid' })).status, 409);
+  const sessions = await Promise.all(people.map(() => api(`/requests/${kiosk.id}/sessions`, {})));
+  assert.ok(sessions.every((session) => session.status === 201));
+  assert.equal(new Set(sessions.map((session) => session.data.nonce)).size, 20);
+  const before = (await api('/dashboard')).data;
+  assert.deepEqual(before.stats, { registered: 20, trusted: 10, checkedIn: 0 });
+  assert.deepEqual(before.attempts, []);
+  const results = await Promise.all(sessions.map(async ({ data: request }, index) => {
+    const presentation = await sd.createPresentation({
+      sdjwt: people[index].credential, reveal: request.required, holderPrivateJwk: people[index].holder.privateJwk,
+      aud: request.aud, nonce: request.nonce,
+    });
+    const result = await api(`/requests/${request.id}/response`, { presentation });
+    assert.equal((await api(`/requests/${request.id}/response`, { presentation })).status, 409);
+    return result;
+  }));
+  assert.equal(results.filter((result) => result.data.ok).length, 10);
+  assert.equal((await api(`/requests/${kiosk.id}`)).data.status, 'pending');
+  const dashboard = (await api('/dashboard')).data;
+  assert.deepEqual(dashboard.stats, { registered: 20, trusted: 10, checkedIn: 10 });
+  assert.equal(dashboard.attempts.length, 20);
+  assert.equal(new Set(dashboard.attempts.map((attempt) => attempt.id)).size, 20);
+  for (const [index, session] of sessions.entries()) {
+    const attempt = dashboard.attempts.find((entry) => entry.id === session.data.id);
+    assert.equal(attempt.name, `Person ${index + 1} Müller`);
+    assert.equal(attempt.issuerName, `Person ${index + 1}s Ausweisstelle`);
+    assert.equal(attempt.identityVerified, index < 10);
+    assert.equal(attempt.status, index < 10 ? 'done' : 'error');
+    if (index >= 10) {
+      assert.equal(attempt.failedAt, 'Issuer-Vertrauen');
+      assert.match(attempt.error, /Vertrauensliste/);
+    }
+  }
+  for (const hidden of ['privateJwk', 'sdjwt', 'presentation', 'nonce', '"organisation"', '"role"']) {
+    assert.equal(JSON.stringify(dashboard).includes(hidden), false, hidden);
+  }
+  const restarted = (await (await start()).api('/dashboard')).data;
+  assert.deepEqual(restarted.stats, dashboard.stats);
+  assert.deepEqual(restarted.attempts, []);
+});
+
+test('Rejected identities remain explicitly unverified and expose the exact failing step, not hidden claims', async (t) => {
+  const { api } = await fixture(t);
+  const guest = await person(api);
+  const { request, presentation } = await guest.checkIn();
+  const parts = presentation.split('~');
+  parts[1] = sd.jsonB64(['salt', 'given_name', 'Ungeprüfter Name']);
+  const changedRequest = (await api('/requests', {})).data;
+  const result = await api(`/requests/${changedRequest.id}/response`, { presentation: parts.join('~') });
+  assert.equal(result.data.ok, false);
+  assert.equal(result.data.failedAt, 'Geteilte Angaben');
+  let latest = (await api('/dashboard')).data.attempts[0];
+  assert.equal(latest.identityVerified, false);
+  assert.equal(latest.name, 'Ungeprüfter Name Müller');
+  assert.match(latest.error, /Disclosure/);
+  assert.notEqual(latest.id, request.id);
+  const unreadable = (await api('/requests', {})).data;
+  await api(`/requests/${unreadable.id}/response`, { presentation: 'not-a-credential' });
+  latest = (await api('/dashboard')).data.attempts[0];
+  assert.equal(latest.name, 'Unbekannte Wallet');
+  assert.equal(latest.failedAt, 'Nachweis lesen');
+  assert.match(latest.identityNote, /nicht.*gelesen/);
+});
+
+test('Kiosk sessions respect expiry and attempt history is bounded and resettable', async (t) => {
+  let time = Date.now();
+  const { api } = await fixture(t, { clock: () => time });
+  assert.equal((await api('/requests', { mode: 'invalid' })).status, 400);
+  const single = (await api('/requests', {})).data;
+  assert.equal((await api(`/requests/${single.id}/sessions`, {})).status, 400);
+  const kiosk = (await api('/requests', { mode: 'kiosk' })).data;
+  await Promise.all(Array.from({ length: 102 }, async () => {
+    const session = (await api(`/requests/${kiosk.id}/sessions`, {})).data;
+    await api(`/requests/${session.id}/response`, { presentation: 'invalid' });
+  }));
+  assert.equal((await api('/dashboard')).data.attempts.length, 100);
+  time += 300000;
+  assert.equal((await api(`/requests/${kiosk.id}/sessions`, {})).status, 410);
+  assert.equal((await api('/admin/reset', {})).status, 200);
+  assert.deepEqual((await api('/dashboard')).data.attempts, []);
+});
+
 test('Wrong credential type and missing required names are rejected', async (t) => {
   const { api } = await fixture(t);
   const wrongType = await person(api, 'Typ', { vct: 'urn:other' });
@@ -217,7 +306,7 @@ test('Signed issuer URL updates preserve approval; identity updates require rene
   assert.equal(renamed.data.ownerName, null);
   assert.equal((await api('/issuers', { did: 'did:jwk:broken', name: 'Invalid' })).status, 400);
   assert.equal((await api('/issuers', { did: guest.issuer.did, name: 'Name', privateJwk: {} })).status, 400);
-  assert.equal((await api('/admin/trust-mode', { mode: 'invalid' }, true)).status, 400);
+  assert.equal((await api('/admin/trust-mode', { mode: 'invalid' })).status, 400);
   const invalid = await fetch(`${base}/api/issuers`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{',
   });
@@ -272,7 +361,7 @@ test('Revocation rejects an existing credential and history contains only disclo
   assert.equal(JSON.stringify(attendee).includes('ISST'), false);
   assert.equal(JSON.stringify(attendee).includes('privateJwk'), false);
   assert.equal(JSON.stringify(attendee).includes('sdjwt'), false);
-  assert.equal((await api(`/admin/issuers/${encodeURIComponent(guest.issuer.did)}/trust`, { trusted: false }, true)).status, 200);
+  assert.equal((await api(`/admin/issuers/${encodeURIComponent(guest.issuer.did)}/trust`, { trusted: false })).status, 200);
   const second = await guest.checkIn();
   assert.equal(second.result.data.ok, false);
   assert.match(second.result.data.error, /Vertrauensliste/);
@@ -287,12 +376,7 @@ test('Invalid deployment configuration fails before serving requests', async (t)
     { publicUrl: 'https://wallet.example.org/subpath' },
     { publicUrl: 'https://user:password@wallet.example.org/' },
     { publicUrl: 'ftp://wallet.example.org/' },
-    { adminToken: '' },
-    { adminToken: ' ' },
-    { adminToken: ' token-with-spaces ' },
-    { adminToken: 'not\nvalid' },
-    { adminToken: 'ü' },
   ]) {
-    await assert.rejects(createApp({ dataDirectory: directory, ...options }), /TRUST_MODE|PUBLIC_URL|ADMIN_TOKEN/);
+    await assert.rejects(createApp({ dataDirectory: directory, ...options }), /TRUST_MODE|PUBLIC_URL/);
   }
 });

@@ -5,6 +5,7 @@ import { chmod, mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as sd from '../public/lib/sdjwt.js';
+import { managementAuth } from './management-auth.js';
 import {
   EMPLOYEE_VCT, REGISTRATION_PROOF, HOLDER_PROOF, publicOrigin, validatePublicJwk, signProof, verifyProof,
 } from '../public/lib/protocol.js';
@@ -51,16 +52,12 @@ function registryMetadata(record) {
 export async function createIssuerApp({
   publicUrl,
   workshopUrl,
-  adminToken = randomBytes(32).toString('base64url'),
   dataDirectory,
   clock = () => Date.now(),
 } = {}) {
   publicUrl = publicOrigin(publicUrl, 'Issuer-Adresse');
   workshopUrl = publicOrigin(workshopUrl, 'Workshop-Adresse');
   if (publicUrl === workshopUrl) throw new Error('Issuer und Workshop brauchen getrennte Adressen.');
-  if (typeof adminToken !== 'string' || !adminToken || /[^\x21-\x7e]/.test(adminToken)) {
-    throw new Error('Das Admin-Token muss aus druckbaren ASCII-Zeichen ohne Leerzeichen bestehen.');
-  }
   if (typeof dataDirectory !== 'string' || !dataDirectory) throw new Error('Das Issuer-Datenverzeichnis fehlt.');
   await mkdir(dataDirectory, { recursive: true, mode: 0o700 });
   const identityFile = path.join(dataDirectory, 'identity.json');
@@ -239,17 +236,12 @@ export async function createIssuerApp({
   app.get('/api/config', (req, res) => res.json({
     role: 'issuer', publicUrl, workshopUrl, eventTitle: 'Meine Ausweisstelle',
   }));
-  app.use('/api/issuer', (req, res, next) => {
-    if (!matchesSecret(req.get('X-Admin-Token'), adminToken)) {
-      return res.status(401).json({ error: 'Das Admin-Token fehlt oder ist ungültig.' });
-    }
-    next();
-  });
   const status = () => ({
     ...(identity ? { did: identity.did, name: identity.name, employeeName: identity.employeeName,
       ...(identity.registration ? { registration: registryMetadata(identity.registration) } : {}) } : {}),
     publicUrl, workshopUrl,
   });
+  const adminToken = managementAuth(app, '/api/issuer');
   app.get('/api/issuer/status', (req, res) => res.json(status()));
   app.post('/api/issuer/setup', wrap(async (req, res) => {
     bodyFields(req.body, ['name', 'employeeName']);
@@ -395,7 +387,7 @@ export async function createIssuerApp({
     res.set('Cache-Control', 'no-store');
     res.sendFile(path.join(publicDirectory, 'issuer.html'));
   });
-  for (const file of ['issuer.js', 'issuer.css', 'styles.css', 'lib/ui.js', 'lib/texts.js',
+  for (const file of ['issuer.js', 'issuer.css', 'styles.css', 'lib/ui.js', 'lib/management.js', 'lib/texts.js',
     'lib/sdjwt.js', 'lib/protocol.js']) {
     app.get(`/${file}`, (req, res) => res.sendFile(path.join(publicDirectory, ...file.split('/'))));
   }

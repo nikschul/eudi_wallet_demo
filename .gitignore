@@ -2,8 +2,8 @@ node_modules/
 data/
 .env
 .env.*
-!.env.example
-!.env.issuer.example
+!/.env.workshop
+!/.env.issuer
 coverage/
 backups/
 *.log

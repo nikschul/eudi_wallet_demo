@@ -53,11 +53,11 @@ test('API errors preserve their HTTP status and successful requests do not cache
   t.mock.method(globalThis, 'fetch', async (url, options) => {
     assert.equal(url, '/api/example');
     assert.equal(options.cache, 'no-store');
-    assert.equal(options.headers['X-Admin-Token'], 'test-token');
+    assert.deepEqual(options.headers, { Accept: 'application/json', 'Content-Type': 'application/json' });
     assert.equal(options.method, 'POST');
     return new Response(JSON.stringify({ error: 'Abgelaufen' }), { status: 410 });
   });
-  await assert.rejects(api('/example', { body: {}, token: 'test-token' }), (error) => (
+  await assert.rejects(api('/example', { body: {} }), (error) => (
     error instanceof ApiError && error.status === 410 && error.message === 'Abgelaufen'
   ));
 });
@@ -87,11 +87,22 @@ test('Issuer requests carry only the offer capability and use the registered ori
   t.mock.method(globalThis, 'fetch', async (url, options) => {
     assert.equal(url, 'https://issuer.example.org/api/offers/example/claim');
     assert.equal(options.headers['X-Offer-Token'], 'offer-capability');
-    assert.equal(options.headers['X-Admin-Token'], undefined);
+    assert.deepEqual(Object.keys(options.headers).sort(), ['Accept', 'Content-Type', 'X-Offer-Token']);
     assert.equal(options.credentials, 'omit');
     return new Response(JSON.stringify({ status: 'bound' }));
   });
   assert.equal((await api('/offers/example/claim', {
     baseUrl: 'https://issuer.example.org', offerToken: 'offer-capability', body: { proof: 'public-proof' },
   })).status, 'bound');
+});
+
+test('Management token is sent explicitly as a header, never as a URL or request body', async (t) => {
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    assert.equal(url, '/api/admin/session');
+    assert.equal(options.headers['X-Admin-Token'], 'private-admin-token');
+    assert.equal(options.body, undefined);
+    assert.equal(options.credentials, 'omit');
+    return new Response('{"ok":true}');
+  });
+  assert.deepEqual(await api('/admin/session', { adminToken: 'private-admin-token' }), { ok: true });
 });

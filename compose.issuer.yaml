@@ -8,9 +8,9 @@ services:
     environment:
       APP_ROLE: issuer
       PORT: "3000"
+      HOST_PORT: ${PORT:-3001}
       PUBLIC_URL: ${PUBLIC_URL:-http://localhost:${PORT:-3001}}
       WORKSHOP_URL: ${WORKSHOP_URL:?WORKSHOP_URL muss die zentrale oeffentliche HTTPS-Adresse sein}
-      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
     ports:
       - "127.0.0.1:${PORT:-3001}:3000"
     volumes:
