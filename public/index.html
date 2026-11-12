@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#179C7D">
-  <meta name="description" content="Erlebe digitale Identität: eigene Wallet, eigener Gastausweis und Check-in per QR-Code.">
+  <meta name="description" content="Hands-on-Workshop: eigene Ausweisstelle am Rechner, Mitarbeiterausweis auf dem Handy und Check-in am Empfang.">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/icons/wallet.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
@@ -24,20 +24,30 @@
       <span class="eyebrow">Digitale Identität zum Ausprobieren</span>
       <h1 data-event-title>EUDI Wallet Workshop</h1>
       <p class="lead">Deine Identität.<br><strong>Deine Entscheidung.</strong></p>
-      <p>Erstelle deine Wallet, stelle dir einen Gastausweis aus und checke am Empfang ein. Direkt im Browser, ohne Konto.</p>
+      <p>Deine Ausweisstelle läuft auf deinem Rechner. Deine Wallet bleibt auf deinem Handy. Am Empfang zeigst du nur die Angaben vor, die du freigibst.</p>
       <div class="journey" aria-label="Dein Weg zum Check-in">
-        <span><b>01</b> Wallet</span><span><b>02</b> Gastausweis</span><span><b>03</b> Check-in</span>
+        <span><b>01 · Rechner</b> Issuer hosten</span><span><b>02 · Handy</b> Ausweis erhalten</span><span><b>03 · Fernseher</b> Einchecken</span>
       </div>
       <div class="stack">
         <a class="button" href="/wallet.html">1. Wallet erstellen</a>
         <span id="wallet-hint" class="muted" hidden>Wallet öffnen – deine Wallet ist bereits angelegt.</span>
-        <a class="button secondary" href="/issuer.html">2. Eigenen Issuer anlegen</a>
       </div>
+    </section>
+    <section class="card workshop-intro">
+      <h2>Dein Workshop in vier Schritten</h2>
+      <ol class="guided-list">
+        <li><strong>Eigene Ausweisstelle betreiben.</strong> Starte auf deinem Linux-/WSL-Rechner den Issuer mit Docker und einem Cloudflare-Tunnel.</li>
+        <li><strong>Vertrauen sichtbar machen.</strong> Melde deinen Issuer am Workshop an. Die Moderation vergleicht den Schlüsselfingerabdruck und ordnet ihn dir zu.</li>
+        <li><strong>Ausstellen und annehmen.</strong> Scanne den Angebots-QR deines Rechners. Verbinde die Wallet, vergleiche den Code und signiere bewusst auf dem Rechner.</li>
+        <li><strong>Vorzeigen statt neu ausstellen.</strong> Scanne den großen Empfangs-QR am Fernseher und entscheide, welche Angaben öffentlich in der Check-in-Liste erscheinen.</li>
+      </ol>
+      <p>Du brauchst keinen Issuer auf diesem Handy. Die Anleitung für deinen Rechner stellt die Moderation bereit.</p>
+      <div data-explain="trust"></div>
     </section>
     <section class="card info">
       <h2>Ein Browser. Dein Gerät.</h2>
       <p>Öffne alle QR-Links im <strong>selben Browser</strong>: auf dem iPhone meist Safari, auf Android meist Chrome. Im privaten Modus können deine Daten beim Schließen verloren gehen.</p>
-      <p>Eine Installation ist nicht nötig. Wenn du die PWA zum Home-Bildschirm hinzufügst, kann sie auf iOS einen <strong>eigenen Speicher</strong> haben. Für den Kamera-QR-Ablauf empfehlen wir deshalb den Browser. Falls du die PWA nutzt, übertrage den aktuellen Empfangslink über „Check-in-Link öffnen“ in der Wallet.</p>
+      <p>Eine Installation ist nicht nötig. Wenn du die PWA zum Home-Bildschirm hinzufügst, kann sie auf iOS einen <strong>eigenen Speicher</strong> haben. Für den Kamera-QR-Ablauf empfehlen wir deshalb den Browser. Falls du die PWA nutzt, übertrage den Ausstellungs- oder Empfangslink über „QR-Link öffnen“ in der Wallet.</p>
       <button id="install" class="secondary" type="button" hidden>Demo als PWA installieren</button>
       <p class="muted">Auf iOS: Teilen → Zum Home-Bildschirm. Die Installation ist optional.</p>
       <div data-explain="real"></div>

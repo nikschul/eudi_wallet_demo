@@ -1,5 +1,18 @@
 import { mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
 import path from 'node:path';
+import { publicOrigin } from '../public/lib/protocol.js';
+
+function validateCheckin(entry) {
+  const strings = ['id', 'name', 'issuerName', 'issuerDid', 'issuerOwner', 'holderDid', 'credentialType', 'credentialId', 'time'];
+  if (!entry || strings.some((key) => typeof entry[key] !== 'string' || !entry[key])
+    || !Number.isFinite(Date.parse(entry.time)) || entry.trustedAtCheckin !== true
+    || !entry.claims || typeof entry.claims !== 'object' || Array.isArray(entry.claims)
+    || Object.entries(entry.claims).some(([key, value]) => !['given_name', 'family_name', 'organisation', 'role'].includes(key)
+      || typeof value !== 'string' || value.length > 120)
+    || !entry.claims.given_name?.trim() || !entry.claims.family_name?.trim()) {
+    throw new Error('Ein gespeichertes Check-in-Protokoll ist beschädigt.');
+  }
+}
 
 export function createStore(directory) {
   mkdirSync(directory, { recursive: true });
@@ -16,6 +29,16 @@ export function createStore(directory) {
           || (name === 'issuers' ? typeof entry.trusted !== 'boolean'
             : typeof entry.time !== 'string' || !Number.isFinite(Date.parse(entry.time)))) {
           throw new Error('Ein gespeicherter Eintrag ist beschädigt.');
+        }
+        if (name === 'issuers' && entry.proofVerified) {
+          if (publicOrigin(entry.publicUrl) !== entry.publicUrl || typeof entry.employeeName !== 'string'
+            || typeof entry.fingerprint !== 'string' || (entry.trusted && !entry.ownerName)) {
+            throw new Error('Die gespeicherte Issuer-Zuordnung ist beschädigt.');
+          }
+        }
+        if (name === 'attendees' && entry.checkins !== undefined) {
+          if (!Array.isArray(entry.checkins)) throw new Error('Die Check-in-Historie ist keine Liste.');
+          for (const checkin of entry.checkins) validateCheckin(checkin);
         }
       }
       if (new Set(entries.map((entry) => entry[key])).size !== entries.length) {
@@ -54,6 +77,18 @@ export function createStore(directory) {
       const next = new Map(attendees).set(key, previous
         ? { ...previous, time: attendee.time }
         : { key, ...attendee });
+      save('attendees', [...next.values()]);
+      attendees = next;
+    },
+    recordCheckin(key, checkin) {
+      validateCheckin(checkin);
+      const previous = attendees.get(key);
+      const entry = {
+        ...checkin,
+        checkins: [...(previous?.checkins || []), checkin],
+        key,
+      };
+      const next = new Map(attendees).set(key, entry);
       save('attendees', [...next.values()]);
       attendees = next;
     },

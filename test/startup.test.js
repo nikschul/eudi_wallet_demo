@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as sd from '../public/lib/sdjwt.js';
+import { REGISTRATION_PROOF, signProof } from '../public/lib/protocol.js';
 
 const entrypoint = fileURLToPath(new URL('../server/index.js', import.meta.url));
 
@@ -22,7 +23,7 @@ async function unusedPort() {
 
 async function start(t, directory, port) {
   const env = { ...process.env };
-  for (const key of ['PORT', 'PUBLIC_URL', 'ADMIN_TOKEN', 'TRUST_MODE', 'DATA_DIR']) delete env[key];
+  for (const key of ['PORT', 'PUBLIC_URL', 'ADMIN_TOKEN', 'TRUST_MODE', 'DATA_DIR', 'APP_ROLE', 'WORKSHOP_URL']) delete env[key];
   const child = spawn(process.execPath, [`--env-file=${path.join(directory, '.env')}`, entrypoint], {
     cwd: tmpdir(), env, stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -50,8 +51,10 @@ async function start(t, directory, port) {
     async stop() {
       const exited = once(child, 'exit');
       child.kill('SIGTERM');
-      const [code] = await exited;
-      assert.equal(code, 0, output);
+      const [code, signal] = await exited;
+      // Windows terminates SIGTERM targets instead of dispatching a POSIX signal.
+      if (process.platform === 'win32' && code === null) assert.equal(signal, 'SIGTERM', output);
+      else assert.equal(code, 0, output);
     },
   };
 }
@@ -69,9 +72,14 @@ test('Configured server starts outside the project directory, stops cleanly and 
   assert.equal(config.publicUrl, `http://localhost:${port}`);
   assert.equal(config.trustMode, 'manual');
   const issuer = await sd.generateKeyPair();
+  const challenge = await (await fetch(`${server.base}/api/issuers/challenge`, { method: 'POST' })).json();
+  const proof = await signProof(REGISTRATION_PROOF, {
+    iss: issuer.did, aud: config.publicUrl, nonce: challenge.nonce,
+    name: 'Process restart test', employeeName: 'Erika', publicUrl: 'https://issuer.example.org',
+  }, issuer.privateJwk);
   const registered = await fetch(`${server.base}/api/issuers`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ did: issuer.did, name: 'Process restart test' }),
+    body: JSON.stringify({ challengeId: challenge.id, proof }),
   });
   assert.equal(registered.status, 201);
   await server.stop();

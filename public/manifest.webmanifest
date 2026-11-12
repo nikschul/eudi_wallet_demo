@@ -2,7 +2,7 @@
   "id": "/",
   "name": "EUDI Wallet Demo",
   "short_name": "EUDI Wallet",
-  "description": "Lerne digitale Identität mit Wallet, Gastausweis und QR-Check-in kennen.",
+  "description": "Dein Mitarbeiterausweis in deiner Wallet: im Workshop erhalten und am Empfang gezielt vorzeigen.",
   "lang": "de",
   "start_url": "/wallet.html",
   "scope": "/",

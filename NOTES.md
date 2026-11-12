@@ -1,100 +1,142 @@
-# Annahmen und Abweichungen
+# Annahmen, Grenzen und Verifikation
 
-## Vorrang des aktuellen Auftrags
+## Getrennter Workshop
 
-- Die Vorlage verbietet Manifest und Service Worker. Der aktuelle Auftrag verlangt
-  ausdrücklich eine PWA. Daher gibt es ein Manifest, installierbare PNG-Icons und
-  eine ausschließlich statische Offline-App-Hülle. Alle anderen Stack-Vorgaben
-  bleiben weitgehend erhalten; keine weiteren npm-Abhängigkeiten.
-- Dockerfile und Compose wurden ergänzt. Optional übernimmt Caddy aus seinem
-  offiziellen Container HTTPS. Ohne HTTPS-Profil funktioniert die App hinter
-  einem vorhandenen Reverse Proxy oder Tunnel.
-- Die bestehende Arbeitsmappe ist kein Git-Repository. Es werden deshalb keine
-  automatischen Checkpoint-Commits erstellt und kein Repository ungefragt initialisiert.
-  Die Vorlage bleibt unverändert erhalten.
+- `APP_ROLE=workshop` ist der Standard: zentrale Wallet-Webapp, Kiosk und Admin.
+  `APP_ROLE=issuer` betreibt die persönliche Ausweisstelle auf einem anderen
+  Rechner. Das gleiche Image wird mit zwei unabhängigen Compose-Dateien gestartet,
+  nicht durch Zusammenführen der Dateien.
+- Die Zentrale vertraut neuen Issuern nicht automatisch. Die Moderation bindet
+  eine registrierte DID nach Fingerprint-Vergleich an eine Person (`ownerName`).
+  Eine signierte Nonce beweist Schlüsselbesitz, nicht die Identität des Menschen.
+  Keine automatische oder Batch-Freigabe, keine Benutzerkonten.
+- Ein Mitarbeiterausweis (`urn:workshop:mitarbeiterausweis:1`) darf absichtlich
+  bereits vor der Freigabe ausgestellt werden. Die Wallet warnt beim zentralen
+  Vertrauensstatus; der Check-in prüft die Freigabe. Die gleiche Credential kann
+  nach Freigabe mit einem neuen Check-in-QR verwendet werden.
+- Private Issuer-Schlüssel liegen serverseitig in `identity.json` im
+  Issuer-Volume; private Wallet-Schlüssel nur im `localStorage` des
+  Smartphone-Browsers. Die jeweiligen Admin-Tokens bleiben im `sessionStorage`.
+  Weder Tokens noch Schlüssel zwischen den Rollen weitergeben.
+- Angebote liegen zehn Minuten im Prozessspeicher, Check-in-Anfragen fünf
+  Minuten. Neustarts verwerfen diese flüchtigen Zustände, Kopplungen und Nonces.
+  Workshop-Listen (`issuers.json`, `attendees.json`) und Issuer-Identität werden
+  getrennt persistiert. Eine Instanz pro Volume; keine horizontale Skalierung.
+- Die Wallet verbindet ihren öffentlichen Schlüssel mit Besitznachweis.
+  Ein Angebot bindet genau eine Wallet; dieselbe Wallet darf den Abruf bis zum
+  Ablauf wiederholen, auch nach bestätigter Annahme. Erst nach Vergleich des
+  Kopplungscodes signiert die Person explizit am geschützten Issuer-Desktop.
+- Issuer-APIs erlauben Cross-Origin-Zugriffe nur vom exakt konfigurierten
+  Workshop-Origin. `WORKSHOP_URL` ist die zentrale öffentliche HTTPS-Adresse,
+  `PUBLIC_URL` die eigene öffentliche Adresse. Lokale HTTP-Adressen dienen
+  ausschließlich dem Start und der Bedienung auf dem jeweiligen Rechner.
+- Der Kiosk zeigt tatsächlich freigegebene Claims, Credential-Typ, Issuer-DID
+  und -Name, zugeordnete freigegebene Person und Zeitstempel. Er veröffentlicht
+  weder versteckte Disclosures noch den vollständigen JWT. Die Wallet erklärt
+  vor der Zustimmung, welche Informationen dort sichtbar werden.
+- Nur cloudflared ist als öffentlicher Zugang dokumentiert. Internetzugang ist
+  nötig; privates LAN-HTTP ist kein Smartphone-Workshop. Tunnel können durch
+  Netzfilter oder Firewalls blockiert sein. Die Anleitungen verwenden Linux-
+  oder WSL2-Bash mit Docker Engine beziehungsweise Docker Desktop mit
+  WSL-Integration. cloudflared läuft als Linux-Prozess in derselben Umgebung,
+  die den veröffentlichten Docker-Host-Port über `localhost` erreichen kann.
+- Es handelt sich nicht um vollständige OpenID4VCI-/OpenID4VP-Interoperabilität,
+  eine offizielle EU-Vertrauensliste, Zertifikats-PKI oder Produktionshärtung.
+  Vertrauen gilt der DID und dem freigegebenen Menschen, nicht der Tunnel-Domain.
 
-## Vereinfachungen der Vorlage
+## Bewusster Bruch mit dem früheren Ablauf
 
-- PWA und Kamera-Deep-Links teilen auf iOS nicht zuverlässig denselben Speicher.
-  Deshalb wird die Browser-Nutzung empfohlen. Für eine installierte PWA existiert
-  zusätzlich ein manuelles Eingabefeld für Check-in-Links derselben Domain.
-  Es gibt keine Übertragung privater Schlüssel zwischen Browsern oder Apps.
-- Ein zuerst gescannter Check-in-Link bleibt über Wallet-Erstellung, Issuer und
-  Angebotsannahme erhalten. Die ursprüngliche Fünf-Minuten-Frist bleibt bestehen.
-- Ein QR kann auch bei Ablehnung der kryptografischen Prüfung nur einmal verwendet
-  werden. Der Kiosk zeigt den Fehler sechs Sekunden und erzeugt einen neuen QR.
-- Ein Wechsel von `auto` zu `manual` betrifft neue Issuer, nicht bestehende
-  Vertrauensentscheidungen. Der Modus wird nicht persistiert; nach Neustart gilt
-  die Umgebung. Die Vertrauensentscheidungen selbst werden persistiert.
-- Ein Reset der Wallet löscht Wallet und offenes Angebot, nicht den eigenen Issuer.
-  Nach neuer Wallet-Erstellung kann derselbe Issuer neue Ausweise dafür ausstellen.
-- Purge löscht ausschließlich die bekannten JSON-Dateien samt temporären Dateien,
-  nicht rekursiv ein durch `DATA_DIR` möglicherweise falsch angegebenes Verzeichnis.
-- PNG-Icons werden deterministisch mit Node-Bordmitteln im Server erzeugt.
-- Für Node ist `.env` explizit mit `--env-file` zu laden (Node >= 20.6), damit
-  `npm start` ohne vorhandene Konfigurationsdatei funktioniert. Dafür gibt es
-  `npm run start:env` und für ein konfiguriertes Datenverzeichnis `npm run purge:env`.
-- Das gemeinsame Kryptografie-Modul weicht inzwischen bewusst vom Referenzcode
-  ab: JWT-Segmentzahl, Algorithmus, Typen, Digest-Liste, Disclosure-Struktur und
-  Zeitangaben werden geprüft. Ablauf gilt bereits bei `exp <= now`; fehlendes
-  oder ungültiges `exp` wird nicht akzeptiert. Für Ausstellungszeitpunkte gilt
-  eine Toleranz von 60 Sekunden in die Zukunft für leicht abweichende Geräteuhren.
-- Check-in-Anfragen bleiben auch über Navigationslinks und Kurzpfad-Redirects
-  erhalten. Schreib- und Signieraktionen lesen den aktuellen Wallet-Zustand,
-  damit ein anderes Browserfenster keine alten Schlüssel oder Nachweislisten
-  unbemerkt wiederherstellt. API-Aufrufe brechen nach 15 Sekunden verständlich ab.
-- Gespeicherte Einträge werden vor dem Aufbau der Maps geprüft. Beschädigte,
-  doppelte oder ungültig datierte Datensätze stoppen den Start, ohne die
-  ursprünglichen Dateien zu verändern.
-- UI und API sind für Demo-Daten bestimmt. Gleiche Namen werden wie in der Vorlage
-  zusammengeführt. Nur eine Server-Instanz; keine Produktionshärtung oder echte
-  EUDI-Interoperabilität.
+Früher lagen Wallet und selbst erstellter Gastausweis-Issuer im selben
+Smartphone-Browser. Das ist **nicht** der aktuelle Workshop-Ablauf. Alte
+Browser-Issuer und Gastausweise sind mit der getrennten Mitarbeiterausweis-Demo
+nicht kompatibel. Vor der Migration alte Server-Volumes sichern; anschließend
+alte Demo-Wallet/Nachweise bewusst zurücksetzen und neu ausstellen. Kein
+automatischer Purge und keine automatische Datenmigration.
 
-## Frühere Verifikation
+Die Projekte `eudi-workshop` und `eudi-issuer` verwenden neue, getrennte Volumes.
+Ein altes `demo-data`-Volume nicht ungeprüft als eines dieser Volumes einhängen.
+Anleitungen für Sicherung, Wiederherstellung und bewusstes Löschen:
+[Administration](docs/ADMIN.md#sichern-wiederherstellen-und-aktualisieren).
+Issuer-Purge ist besonders destruktiv: Er löscht die Issuer-Identität und damit
+die DID; anschließend muss die neue Identität erneut registriert und freigegeben
+werden. Der Rollen-Guard darf `identity.json` nur für `APP_ROLE=issuer` löschen.
 
-Im bisherigen Projektstand mit Node 20.12.2 protokolliert:
+## Lokale Entwicklungsprüfungen
 
-- Alle 19 Node-Tests grün; alle JavaScript-Dateien mit `node --check` geprüft;
-  keine gemeldeten Editor-Probleme.
-- Kryptografie-Modul damals textgenau mit dem Referenzcode verglichen;
-  die nachträglichen Validierungen sind oben dokumentiert.
-- Im integrierten Chromium-Browser: Wallet erstellen und nach Reload wiederfinden,
-  Issuer registrieren, Gastausweis ausstellen, Angebot annehmen, Rohdaten ansehen.
-- Wallet und Issuer bei 375 CSS-Pixeln ohne horizontalen Überlauf; Texte in der
-  mobilen Hauptansicht mindestens 16 px.
-- Standardfreigabe enthält nur Vor-/Nachname; optionaler Check-in enthält auch
-  Organisation und Rolle. Keine privaten JWK-Felder in den beobachteten API-Requests.
-- Kiosk bei 1920 × 1080 ohne Seitenscrollen, QR etwa 518 px, sieben Prüfschritte,
-  Begrüßung und automatischer neuer QR nach dem Sechs-Sekunden-Timer.
-- Erstscan ohne Wallet behält die Anfrage durch Onboarding und Ausstellung bei.
-- Manueller Issuer wird abgelehnt und nach Admin-Freigabe akzeptiert;
-  Replay-Demo zeigt den Nonce-Fehler. Admin-Token bleibt im Sitzungsspeicher.
-- Offline ist ein gespeicherter Nachweis lesbar. Im Service-Worker-Cache liegen
-  nur die statischen Dateien, keine API-Antworten.
-- Echter Serverprozess-Neustart erhält die beiden Demo-Issuer und Check-ins.
+Auf einem Entwicklungsrechner mit Node.js 24 LTS (Minimum 20.6):
 
-## Aktuelle Verifikation (12. November 2026)
+```bash
+npm ci
+npm run check
+npm test
+```
 
-- Node.js 24.22.3 separat im Sitzungsverzeichnis verwendet, ohne die
-  Systeminstallation zu verändern.
-- Alle 36 Node-Tests erfolgreich; `npm run check` prüft alle 20
-  JavaScript-Dateien ohne Syntaxfehler. Keine gemeldeten Editor-Probleme.
-- Tatsächlicher Prozessstart mit `.env` aus einem anderen Arbeitsordner,
-  abweichender Port, Healthcheck, sauberes SIGTERM und persistente Issuer nach
-  Prozessneustart sind automatisiert geprüft.
-- Browserablauf bei 375 CSS-Pixeln: Check-in-QR zuerst, Wallet erstellen,
-  Navigation zum Issuer mit erhaltener Anfrage, ausstellen, übergeben, annehmen
-  und erfolgreich einchecken. Sieben erfolgreiche Prüfschritte, nur Vor- und
-  Nachname freigegeben, kein horizontaler Überlauf in der Ergebnisansicht.
-  Wegen Einschränkungen des integrierten Browsers wurden Formulare dabei
-  teilweise programmatisch abgeschickt; dies ersetzt keinen Touch-Gerätetest.
-- Docker CLI und Compose sind installiert. Beide Compose-Profile und die
-  Port-Interpolation wurden erfolgreich mit `docker compose config` geprüft.
-  Der echte Image-Build wurde versucht, scheitert aber an fehlenden
-  Zugriffsrechten auf `/var/run/docker.sock`. Containerstart, Caddy und öffentliche
-  TLS-Zertifikatsausstellung sind daher weiterhin **nicht verifiziert**.
+Der vorhandene Node-Test-Runner und die Syntaxprüfung bleiben maßgeblich; keine
+zusätzlichen Testpakete nötig. Der Docker-Build führt diese Prüfungen ebenfalls
+aus. Für einen direkten lokalen Start kann Node die jeweils explizite Datei
+laden, zum Beispiel `node --env-file=.env.workshop server/index.js`.
+Direkter Node-Betrieb braucht getrennte `DATA_DIR`-Verzeichnisse je Rolle.
+`PORT` ist dabei der echte Server-Port, nicht nur der Docker-Host-Port.
+Schlüsselbesitz, CORS und Smartphone-Verhalten sind zusätzlich im Browser zu prüfen.
 
-Die reproduzierbaren Node-Tests stehen unter `test/`. Ein echter Gerätetest auf
-iPhone und Android, ein Kamera-Scan über Mobilfunk und die Drei-Minuten-Grenze
-benötigen die spätere öffentliche HTTPS-Adresse und physische Geräte. Diese
-Abnahme ist durch Desktop-Browser-Tests nicht ersetzbar.
+## Aktuelle Verifikation: lokale Browser-Abnahme erfolgreich
+
+Stand der gemeldeten Testergebnisse vom 12. November 2026:
+
+### Erfolgreich geprüft
+
+- Der Schlussdurchlauf ist abgeschlossen: `npm run check` prüfte **25 Dateien**
+  erfolgreich. Unter **Node.js 20.12.2** ergab
+  `node --test --test-reporter=spec --test-concurrency=8` **56/56 Tests
+  erfolgreich, 0 Fehler, 4,338 Sekunden**. Die Workspace-Problems waren leer.
+  Diese Ergebnisse betreffen den getrennten Workshop, nicht den früheren
+  gemeinsamen Smartphone-/Issuer-Ablauf.
+- Der integrierte Browserablauf wurde mit **zwei echten lokalen
+  Serverprozessen auf getrennten Origins** `http://localhost:3087` und
+  `http://localhost:3088` erfolgreich durchgespielt. Das waren keine zwei
+  physischen Rechner und keine öffentlichen HTTPS-Tunnel.
+- Die Wallet war schon vor der Issuer-Registrierung geladen und erhielt später
+  den `#offer`-Link nach einem CSP-bedingten Reload. Erstmaliges Wallet-Anlegen,
+  Angebots-QR, Holder-Besitznachweis und Kopplungscode funktionierten.
+  Danach wurde ausdrücklich am Desktop signiert; die Wallet verifizierte
+  lokal, speicherte den Ausweis und bestätigte die Annahme.
+- Der Check-in des nicht freigegebenen Issuers wurde korrekt abgelehnt.
+  Anschließend wurde in der Administration der Demo-Name „Erika Müller“
+  mit dem Fingerprint zugeordnet und freigegeben. **Derselbe Ausweis** wurde
+  mit einem neuen QR erfolgreich eingecheckt; alle sieben Prüfungen waren
+  erfolgreich. Der Test-Fingerprint `fv6L8KNH_TPwIoMe` war im Issuer-Dashboard
+  gut sichtbar und stimmte mit der Administration überein.
+- Zwei Check-ins derselben Credential-ID blieben getrennte Kiosk-Snapshots:
+  zunächst nur die Namen, danach zusätzlich die freigegebene Organisation.
+  Jeder Snapshot enthielt nur die tatsächlich geteilten Angaben. Geöffnete
+  Details blieben auch über Polling-Aktualisierungen hinweg geöffnet.
+- Kiosk bei **1920 × 1080** ohne Überlauf, Check-in-QR etwa **518 px**.
+  Wallet bei **375 px** Ansichtsbreite ohne horizontalen Überlauf.
+  Alle sichtbaren Wallet-Buttons waren in dieser Ansicht **48 px** hoch.
+  Das sind Desktop-Browser-Ansichten, keine Hardware-Abnahme.
+- Bei einem echten **Offline-Reload mit aktivem Service Worker** blieb der
+  gespeicherte Erika-Ausweis sichtbar. Der Vertrauensstatus wurde klar als
+  nicht erreichbar angezeigt, nicht als offline bestätigtes Vertrauen.
+- Die Replay-Oberfläche zeigte den erkannten Replay-Versuch und die falsche
+  Nonce an.
+
+### Weiterhin offene Einsatz- und Infrastrukturprüfung
+
+- Docker CLI ist in dieser Bearbeitungsumgebung nicht verfügbar.
+  `docker compose config`, Image-Build und Containerstart sind hier deshalb
+  **nicht verifiziert**. Auch Sicherung, Wiederherstellung und Rollen-Purge mit
+  echten Docker-Volumes sind damit nicht als abgenommen behauptet.
+- Einsatz auf **zwei unabhängigen Rechnern**, Linux-/WSL-Integration,
+  Socket-Zugriff und Erreichbarkeit des lokalen Docker-Host-Ports durch den
+  Linux-cloudflared-Prozess sind **noch nicht abgenommen**.
+- Öffentliche cloudflared-HTTPS-Tunnel, Cross-Origin-Zugriffe über diese
+  Tunnel sowie Firewall-/Netzfilterverhalten sind **noch ungetestet**.
+  Der erfolgreiche lokale Zwei-Origin-Test ersetzt diese Einsatzprüfung nicht.
+- Echte iPhones mit Safari und Android-Geräte mit Chrome, Kamera-Links im
+  selben Browser, iOS-Speicherverhalten, fremdes WLAN/Mobilfunk und ein
+  physischer TV-Kiosk sind **noch nicht abgenommen**. Desktop-Tests ersetzen
+  diese Prüfung nicht.
+
+Die vollständige praktische Checkliste steht in
+[ADMIN.md](docs/ADMIN.md#abnahme-vor-dem-workshop). Keine Zusage einer bereits
+gemessenen Durchlaufzeit oder bestandener Hardwaretests.

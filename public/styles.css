@@ -51,6 +51,17 @@ nav a[aria-current] { color: var(--accent-dark); font-weight: 650; }
 .admin-shell > .card { margin-bottom: 24px; }
 .landing { max-width: 760px; }
 .hero { padding: 18px 0 32px; }
+.workshop-intro { margin-bottom: 24px; }
+.guided-list { padding-left: 24px; }
+.guided-list li { padding: 6px 0; }
+.workshop-journey { list-style: none; display: flex; padding: 0; margin: 0; gap: 8px; flex-wrap: wrap; }
+.workshop-journey li { padding: 8px 12px; border-radius: 10px; background: #e7eee9; color: var(--muted); font-size: 1rem; }
+.workshop-journey .current { background: var(--accent-dark); color: #fff; }
+.workshop-journey .complete { color: var(--accent-dark); background: #def1e7; }
+.pairing-code { font-size: 1.6rem; font-weight: 750; letter-spacing: .08em; color: var(--accent-dark); background: #e1f3ea; padding: 20px; border-radius: 12px; overflow-wrap: anywhere; }
+.issuer-approval { padding: 22px; border: 1px solid var(--line); border-radius: 14px; }
+.issuer-approval form { margin-bottom: 16px; }
+.fingerprint { font-size: 1.15rem; font-weight: 650; }
 .lead { font-size: clamp(2.4rem, 6vw, 3.8rem); line-height: 1.1; letter-spacing: -.045em; margin-bottom: 24px; }
 .lead strong { color: var(--accent-dark); }
 .eyebrow { font-size: .78rem; font-weight: 700; text-transform: uppercase; letter-spacing: .12em; color: var(--accent-dark); }
@@ -137,6 +148,17 @@ td input[type="checkbox"] { width: 32px; height: 32px; margin: 6px; }
 .attendees-panel { display: flex; flex-direction: column; flex: 1; min-height: 150px; overflow: hidden; }
 .attendee-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; }
 .attendee-list li { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.attendee-detail { width: 100%; }
+.attendee-detail > summary { display: flex; align-items: center; gap: 12px; color: var(--ink); }
+.attendee-detail > summary::after { content: "+"; color: var(--accent-dark); font-weight: 700; }
+.attendee-detail[open] > summary::after { content: "−"; }
+.attendee-heading { flex: 1; min-width: 0; }
+.attendee-detail .attributes { margin-block: 8px; font-size: .9rem; }
+.attendee-detail .attributes dd, .attendee-detail .attributes dt { padding-block: 6px; }
+.checkin-record { margin: 12px 0; padding: 14px; background: #f2f7f3; border-radius: 12px; }
+.checkin-record p { font-size: .85rem; margin-bottom: 6px; overflow-wrap: anywhere; }
+.checkin-record h3 { font-size: 1rem; margin-bottom: 10px; }
+.list-hint { font-size: .85rem; margin-bottom: 6px; }
 .attendee-list li > div { flex: 1; min-width: 0; }
 .attendee-list strong, .attendee-list .muted { display: block; overflow-wrap: anywhere; }
 .attendee-list .muted, .attendee-list time { font-size: .8rem; }

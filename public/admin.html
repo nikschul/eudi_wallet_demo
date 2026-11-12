@@ -16,7 +16,7 @@
     <nav aria-label="Hauptnavigation"><a href="/kiosk.html">Empfang</a><a href="/wallet.html">Wallet</a></nav>
   </header>
   <main class="shell admin-shell">
-    <span class="eyebrow">Betreiber / Vertrauensliste</span><h1>Den Überblick behalten.</h1>
+    <span class="eyebrow">Workshop-Zentrale / Moderation</span><h1>Vertrauen ist eine Entscheidung.</h1>
     <div id="error" class="message error" role="alert" hidden></div>
     <div id="notice" class="message notice" role="status" hidden></div>
     <section class="card">
@@ -28,17 +28,20 @@
       </form>
     </section>
     <section class="card">
-      <h2>Vertrauensmodus</h2>
-      <form id="mode-form" class="inline-form">
-        <label class="field grow">Neue Issuer<select id="mode" name="mode"><option value="auto">Automatisch vertrauen (auto)</option><option value="manual">Durch Moderation freigeben (manual)</option></select></label>
-        <button type="submit">Modus speichern</button>
-      </form>
-      <p class="muted">Eine Änderung gilt nur für neue Issuer. Bestehende Freigaben bleiben erhalten. Nach einem Neustart gilt wieder TRUST_MODE aus der Umgebung.</p>
-      <div data-explain="issuer"></div>
+      <h2>Die Vertrauensliste im Workshop</h2>
+      <ol class="guided-list">
+        <li><strong>Anmelden:</strong> Mitarbeitende hosten ihren eigenen Issuer und beweisen den Besitz des Ausstellerschlüssels.</li>
+        <li><strong>Zuordnen:</strong> Vergleiche den Fingerabdruck mit dem Bildschirm der Person und trage ihren Namen ein. Ein selbst gewählter Issuer-Name beweist keine Identität.</li>
+        <li><strong>Bewusst vertrauen:</strong> Erteile die Freigabe. Der Empfang akzeptiert nur diesen konkreten Schlüssel, keine beliebige Cloudflare-Domain.</li>
+        <li><strong>Den Unterschied erleben:</strong> Erst mit nicht freigegebenem Issuer einchecken lassen, dann freigeben. Derselbe Ausweis funktioniert am neuen Check-in-QR.</li>
+      </ol>
+      <p id="trust-summary" class="message notice" role="status"></p>
+      <div data-explain="trust"></div>
     </section>
     <section class="card">
       <div class="card-top"><h2>Registrierte Issuer</h2><button id="refresh" type="button" class="secondary">Aktualisieren</button></div>
-      <div class="table-scroll"><table><thead><tr><th>Name</th><th>DID</th><th>Vertrauenswürdig</th></tr></thead><tbody id="issuers"></tbody></table></div>
+      <p>Registrierung und Schlüsselbeweis sind technisch geprüft. Die Zuordnung zu einem Mitarbeitenden bestätigst du als Moderation.</p>
+      <div id="issuers" class="stack"></div>
       <p id="empty" class="muted" hidden>Noch keine Issuer registriert.</p>
     </section>
     <section class="card">

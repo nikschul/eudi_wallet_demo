@@ -2,6 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { api, ApiError, currentRequestId, readWalletFor, updateRequestLinks } from '../public/lib/ui.js';
 
+// Node 20 exposes fetch through a lazy getter that must resolve before mocking.
+void globalThis.fetch;
+
 function mockGlobal(t, name, value) {
   const previous = Object.getOwnPropertyDescriptor(globalThis, name);
   Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
@@ -78,4 +81,17 @@ test('API network failures and unreadable responses are explicit', async (t) => 
   t.mock.restoreAll();
   t.mock.method(globalThis, 'fetch', async () => new Response('<html>Proxy error</html>'));
   await assert.rejects(api('/config'), /keine lesbare Antwort/);
+});
+
+test('Issuer requests carry only the offer capability and use the registered origin', async (t) => {
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    assert.equal(url, 'https://issuer.example.org/api/offers/example/claim');
+    assert.equal(options.headers['X-Offer-Token'], 'offer-capability');
+    assert.equal(options.headers['X-Admin-Token'], undefined);
+    assert.equal(options.credentials, 'omit');
+    return new Response(JSON.stringify({ status: 'bound' }));
+  });
+  assert.equal((await api('/offers/example/claim', {
+    baseUrl: 'https://issuer.example.org', offerToken: 'offer-capability', body: { proof: 'public-proof' },
+  })).status, 'bound');
 });

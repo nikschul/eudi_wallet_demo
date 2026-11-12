@@ -49,21 +49,23 @@ export class ApiError extends Error {
   }
 }
 
-export async function api(route, { body, token, timeoutMs = 15000 } = {}) {
+export async function api(route, { body, token, offerToken, baseUrl = '', timeoutMs = 15000 } = {}) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     let response;
     try {
-      response = await fetch(`/api${route}`, {
+      response = await fetch(`${baseUrl}/api${route}`, {
         method: body === undefined ? 'GET' : 'POST',
         headers: {
           Accept: 'application/json',
           ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
           ...(token ? { 'X-Admin-Token': token } : {}),
+          ...(offerToken ? { 'X-Offer-Token': offerToken } : {}),
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         cache: 'no-store',
+        credentials: 'omit',
         signal: controller.signal,
       });
     } catch (error) {

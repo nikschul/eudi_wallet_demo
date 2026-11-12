@@ -6,6 +6,7 @@ import path from 'node:path';
 import { once } from 'node:events';
 import { createApp } from '../server/app.js';
 import * as sd from '../public/lib/sdjwt.js';
+import { EMPLOYEE_VCT, REGISTRATION_PROOF, signProof } from '../public/lib/protocol.js';
 
 async function fixture(t, options = {}) {
   const directory = await mkdtemp(path.join(tmpdir(), 'eudi-test-'));
@@ -31,15 +32,28 @@ async function fixture(t, options = {}) {
   return { ...await start(), start };
 }
 
-async function person(api, name = 'Erika', extra = {}) {
+async function register(api, issuer, updates = {}) {
+  const challenge = (await api('/issuers/challenge', {})).data;
+  const proof = await signProof(REGISTRATION_PROOF, {
+    iss: issuer.did, aud: challenge.aud, nonce: challenge.nonce,
+    name: 'Meine Ausweisstelle', employeeName: 'Erika', publicUrl: 'https://issuer.example.org', ...updates,
+  }, issuer.privateJwk);
+  return api('/issuers', { challengeId: challenge.id, proof });
+}
+
+async function person(api, name = 'Erika', extra = {}, approved = true) {
   const issuer = await sd.generateKeyPair();
   const holder = await sd.generateKeyPair();
-  const registered = await api('/issuers', { did: issuer.did, name: `${name}s Ausweisstelle` });
+  const registered = await register(api, issuer, { name: `${name}s Ausweisstelle`, employeeName: name });
   assert.equal(registered.status, 201);
+  assert.equal(registered.data.trusted, false);
+  if (approved) {
+    assert.equal((await api(`/admin/issuers/${encodeURIComponent(issuer.did)}/trust`, { trusted: true, ownerName: name }, true)).status, 200);
+  }
   const credential = await sd.issueSdJwt({
     issuerDid: issuer.did, issuerPrivateJwk: issuer.privateJwk, holderPublicJwk: holder.publicJwk,
-    vct: 'urn:isst:gastausweis:1', claims: {
-      given_name: name, family_name: 'Müller', organisation: 'ISST', role: 'Gast',
+    vct: EMPLOYEE_VCT, claims: {
+      given_name: name, family_name: 'Müller', organisation: 'ISST', role: 'Mitarbeitende',
     },
     ...extra,
   });
@@ -107,10 +121,16 @@ test('Ten check-ins, selective disclosure, deduplication and restart persistence
     assert.equal((await api(`/requests/${request.id}/response`, { presentation })).status, 409);
   }
   assert.equal((await api('/attendees')).data.length, 1);
+  assert.equal((await api('/attendees')).data[0].checkins.length, 10);
   assert.equal('organisation' in (await api('/attendees')).data[0], false);
   const optional = await guest.checkIn(['given_name', 'family_name', 'organisation', 'role']);
   assert.equal(optional.result.data.claims.organisation, 'ISST');
-  assert.equal('organisation' in (await api('/attendees')).data[0], false);
+  assert.equal((await api('/attendees')).data[0].organisation, 'ISST');
+  const history = (await api('/attendees')).data[0].checkins;
+  assert.equal(history.length, 11);
+  assert.deepEqual(Object.keys(history[0].claims).sort(), ['family_name', 'given_name']);
+  assert.equal(history[10].claims.role, 'Mitarbeitende');
+  assert.equal(history[0].credentialId, history[10].credentialId);
   const optionalGuest = await person(api, 'Ada');
   await optionalGuest.checkIn(['given_name', 'family_name', 'organisation', 'role']);
   const restarted = await start();
@@ -121,7 +141,7 @@ test('Ten check-ins, selective disclosure, deduplication and restart persistence
 
 test('Manual trust, authenticated moderation, replay and reset', async (t) => {
   const { api } = await fixture(t, { trustMode: 'manual' });
-  const guest = await person(api);
+  const guest = await person(api, 'Erika', {}, false);
   assert.equal((await api('/admin/reset', {})).status, 401);
   assert.equal((await api('/admin/replay', {}, true)).status, 409);
   const denied = await guest.checkIn();
@@ -129,14 +149,15 @@ test('Manual trust, authenticated moderation, replay and reset', async (t) => {
   assert.match(denied.result.data.error, /Vertrauensliste/);
   assert.equal((await api(`/requests/${denied.request.id}`)).data.status, 'error');
   const trustPath = `/admin/issuers/${encodeURIComponent(guest.issuer.did)}/trust`;
-  assert.equal((await api(trustPath, { trusted: true }, true)).status, 200);
+  assert.equal((await api(trustPath, { trusted: true }, true)).status, 400);
+  assert.equal((await api(trustPath, { trusted: true, ownerName: 'Erika Müller' }, true)).status, 200);
   assert.equal((await guest.checkIn()).result.data.ok, true);
   const replay = await api('/admin/replay', {}, true);
   assert.equal(replay.data.ok, false);
   assert.match(replay.data.error, /Nonce/);
   assert.equal((await api('/attendees')).data.length, 1);
-  assert.equal((await api('/admin/trust-mode', { mode: 'auto' }, true)).data.mode, 'auto');
-  assert.equal((await api('/config')).data.trustMode, 'auto');
+  assert.equal((await api('/admin/trust-mode', { mode: 'auto' }, true)).status, 400);
+  assert.equal((await api('/config')).data.trustMode, 'manual');
   assert.equal((await api('/admin/reset', {}, true)).status, 200);
   assert.deepEqual((await api('/attendees')).data, []);
   assert.equal((await api('/issuers')).data.length, 1);
@@ -177,19 +198,23 @@ test('Concurrent responses consume a QR exactly once', async (t) => {
 test('Wrong credential type and missing required names are rejected', async (t) => {
   const { api } = await fixture(t);
   const wrongType = await person(api, 'Typ', { vct: 'urn:other' });
-  assert.match((await wrongType.checkIn()).result.data.error, /Gastausweis/);
+  assert.match((await wrongType.checkIn()).result.data.error, /Mitarbeiterausweis/);
   const missing = await person(api, 'Feld', { claims: { given_name: 'Erika' } });
   assert.match((await missing.checkIn()).result.data.error, /erforderlichen/);
   assert.deepEqual((await api('/attendees')).data, []);
 });
 
-test('Issuer updates preserve trust; invalid inputs are explicit errors', async (t) => {
+test('Signed issuer URL updates preserve approval; identity updates require renewed trust', async (t) => {
   const { api, base } = await fixture(t, { trustMode: 'manual' });
   const guest = await person(api);
-  await api(`/admin/issuers/${encodeURIComponent(guest.issuer.did)}/trust`, { trusted: true }, true);
-  const update = await api('/issuers', { did: guest.issuer.did, name: 'Neuer Name' });
+  const update = await register(api, guest.issuer, {
+    name: 'Erikas Ausweisstelle', employeeName: 'Erika', publicUrl: 'https://new-issuer.example.org',
+  });
   assert.equal(update.status, 200);
   assert.equal(update.data.trusted, true);
+  const renamed = await register(api, guest.issuer, { name: 'Neuer Name' });
+  assert.equal(renamed.data.trusted, false);
+  assert.equal(renamed.data.ownerName, null);
   assert.equal((await api('/issuers', { did: 'did:jwk:broken', name: 'Invalid' })).status, 400);
   assert.equal((await api('/issuers', { did: guest.issuer.did, name: 'Name', privateJwk: {} })).status, 400);
   assert.equal((await api('/admin/trust-mode', { mode: 'invalid' }, true)).status, 400);
@@ -207,6 +232,51 @@ test('Short page links preserve the check-in query across redirects', async (t) 
     assert.equal(response.status, 302);
     assert.equal(response.headers.get('location'), `/${page}.html?req=example&other=value`);
   }
+});
+
+test('Registration proves key ownership, binds the hub audience and rejects replay', async (t) => {
+  const { api, base } = await fixture(t);
+  const issuer = await sd.generateKeyPair();
+  const challenge = (await api('/issuers/challenge', {})).data;
+  const payload = {
+    iss: issuer.did, aud: challenge.aud, nonce: challenge.nonce,
+    name: 'Erikas Issuer', employeeName: 'Erika', publicUrl: 'https://issuer.example.org',
+  };
+  const proof = await signProof(REGISTRATION_PROOF, payload, issuer.privateJwk);
+  const wrongAudience = await signProof(REGISTRATION_PROOF, { ...payload, aud: 'https://elsewhere.example.org' }, issuer.privateJwk);
+  assert.equal((await api('/issuers', { challengeId: challenge.id, proof: wrongAudience })).status, 400);
+  const stranger = await sd.generateKeyPair();
+  const wrongKey = await signProof(REGISTRATION_PROOF, payload, stranger.privateJwk);
+  assert.equal((await api('/issuers', { challengeId: challenge.id, proof: wrongKey })).status, 400);
+  const results = await Promise.all([
+    api('/issuers', { challengeId: challenge.id, proof }),
+    api('/issuers', { challengeId: challenge.id, proof }),
+  ]);
+  assert.equal(results.filter((result) => result.status === 201).length, 1);
+  assert.equal(results.filter((result) => [409, 410].includes(result.status)).length, 1);
+  assert.equal((await api('/issuers', { challengeId: challenge.id, proof })).status, 410);
+  assert.equal((await api('/issuers')).data[0].trusted, false);
+  const page = await fetch(`${base}/wallet.html`);
+  assert.match(page.headers.get('content-security-policy'), /https:\/\/issuer\.example\.org/);
+  assert.match(await page.text(), /name="issuer-origins" content="\[&quot;https:\/\/issuer.example.org&quot;\]"/);
+});
+
+test('Revocation rejects an existing credential and history contains only disclosed claims', async (t) => {
+  const { api } = await fixture(t);
+  const guest = await person(api);
+  const first = await guest.checkIn();
+  assert.equal(first.result.data.ok, true);
+  const attendee = (await api('/attendees')).data[0];
+  assert.equal(attendee.issuerOwner, 'Erika');
+  assert.equal(attendee.credentialType, EMPLOYEE_VCT);
+  assert.equal(JSON.stringify(attendee).includes('ISST'), false);
+  assert.equal(JSON.stringify(attendee).includes('privateJwk'), false);
+  assert.equal(JSON.stringify(attendee).includes('sdjwt'), false);
+  assert.equal((await api(`/admin/issuers/${encodeURIComponent(guest.issuer.did)}/trust`, { trusted: false }, true)).status, 200);
+  const second = await guest.checkIn();
+  assert.equal(second.result.data.ok, false);
+  assert.match(second.result.data.error, /Vertrauensliste/);
+  assert.equal((await api('/attendees')).data[0].checkins.length, 1);
 });
 
 test('Invalid deployment configuration fails before serving requests', async (t) => {
