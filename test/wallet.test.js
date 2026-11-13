@@ -19,8 +19,16 @@ class Element {
   listeners = new Map();
   attributes = {};
   constructor(tagName) { this.tagName = tagName; }
-  append(...children) { this.children.push(...children); }
-  replaceChildren(...children) { this.children = children; }
+  append(...children) {
+    for (const child of children) {
+      if (child instanceof Element) child.parent = this;
+      this.children.push(child);
+    }
+  }
+  replaceChildren(...children) { this.children = []; this.append(...children); }
+  remove() { if (this.parent) this.parent.children = this.parent.children.filter((child) => child !== this); }
+  showModal() { this.open = true; }
+  close() { this.open = false; }
   setAttribute(name, value) { this.attributes[name] = value; }
   addEventListener(name, handler) { this.listeners.set(name, handler); }
   querySelector(selector) {
@@ -95,6 +103,7 @@ async function fixture(t) {
   const storage = new Map([['wallet', JSON.stringify(wallet)]]);
   const state = {
     issuer, wallet, app, error, notice, browserEvents, documentEvents, location, navigation, requests, timers, storage, credential,
+    walletOrigin: issuerUrl,
     issuers: [{
       id: organisationId, did: issuer.did, publicUrl: issuerUrl, statusListUrl: statusUri,
       name: 'Demo-Issuer', state: 'approved', proofVerified: true, trusted: false,
@@ -135,7 +144,7 @@ async function fixture(t) {
     addEventListener: (name, handler) => documentEvents.set(name, handler),
     createElement: (tag) => new Element(tag),
     getElementById: (id) => ({ app, error, notice }[id] || null),
-    querySelector: (selector) => ({ content: selector.includes('issuer-origins') ? JSON.stringify([issuerUrl]) : location.origin }),
+    querySelector: (selector) => ({ content: selector.includes('issuer-origins') ? JSON.stringify([issuerUrl]) : state.walletOrigin }),
     querySelectorAll: (selector) => selector === 'nav a' ? [navigation] : [],
   });
   mockGlobal(t, 'localStorage', {
@@ -246,7 +255,11 @@ function badge(root) {
 
 async function submit(root) {
   const form = find(root, (node) => node.tagName === 'form' && node.listeners.has('submit'));
-  await form.listeners.get('submit')({ preventDefault() {} });
+  let done = false;
+  const pending = form.listeners.get('submit')({ preventDefault() {} }).then(() => { done = true; });
+  await until(() => done || find(root, (node) => node.textContent === 'Demo-Biometrie bestätigen'));
+  if (!done) await button(root, 'Demo-Biometrie bestätigen').listeners.get('click')();
+  await pending;
 }
 
 async function resign(credential, issuer, transform) {
@@ -339,6 +352,8 @@ test('Wallet overview never starts consent; QR requests are consumed and leaving
   assert.equal(presentationRequests().at(-1), `/api/requests/${personalId}`);
   const form = find(app, (node) => node.listeners.has('submit'));
   const submitting = form.listeners.get('submit')({ preventDefault() {} });
+  await until(() => find(app, (node) => node.textContent === 'Demo-Biometrie bestätigen'));
+  await button(app, 'Demo-Biometrie bestätigen').listeners.get('click')();
   await responseStarted;
   await find(app, (node) => node.textContent === 'Ablehnen').listeners.get('click')();
   await settle();
@@ -495,6 +510,137 @@ test('Consent chooses a suitable non-revoked credential instead of the newest re
   assert.equal(sd.describeCredential(request.presentations[0]).payload.status.status_list.idx, 0);
   assert.match(state.app.textContent, /Du bist eingecheckt/);
   assert.equal(state.timers.size, 0);
+});
+
+test('Multiple valid credentials require an explicit choice and present only the selected card', async (t) => {
+  const state = await fixture(t);
+  state.wallet.credentials.push(await state.credential('second-card', 1, {
+    claims: { given_name: 'Else', family_name: 'Beispiel', organisation: 'Demo-Issuer', role: 'Teamleitung' },
+  }));
+  state.storage.set('wallet', JSON.stringify(state.wallet));
+  const request = requestFixture(state, { optional: ['role'] });
+  await state.start();
+  await until(() => state.app.textContent.includes('Aktiv'));
+  request.open();
+  await until(() => state.app.textContent.includes('Mehrere Ausweise passen'));
+  const radio = find(state.app, (node) => node.tagName === 'input' && node.attributes.value === 'employee-card');
+  const other = find(state.app, (node) => node.tagName === 'input' && node.attributes.value === 'second-card');
+  assert.ok(!radio.checked && !other.checked);
+  assert.equal(button(state.app, 'Freigeben & einchecken').disabled, true);
+  await submit(state.app);
+  assert.equal(request.presentations.length, 0);
+  assert.match(state.error.textContent, /wähle zuerst einen Ausweis/);
+  radio.listeners.get('change')();
+  assert.equal(radio.checked, true);
+  assert.equal(other.checked, false);
+  await state.poll();
+  assert.equal(radio.checked, true);
+  assert.match(state.app.textContent, /Empfang erhält/);
+  assert.match(state.app.textContent, /Nicht als Attribut geteilt/);
+  await submit(state.app);
+  assert.equal(request.presentations.length, 1);
+  assert.equal(sd.describeCredential(request.presentations[0]).payload.status.status_list.idx, 0);
+  assert.deepEqual(sd.describeCredential(request.presentations[0]).claims, { given_name: 'Erika', family_name: 'Muster' });
+});
+
+test('Mock biometrics are explicit, cancellable and never sign or send before confirmation', async (t) => {
+  const state = await fixture(t);
+  const request = requestFixture(state);
+  await state.start();
+  await until(() => state.app.textContent.includes('Aktiv'));
+  request.open();
+  await until(() => state.app.textContent.includes('Welche Angaben möchtest du teilen'));
+  const form = find(state.app, (node) => node.tagName === 'form');
+  const pending = form.listeners.get('submit')({ preventDefault() {} });
+  await until(() => state.app.textContent.includes('Demo-Biometrie bestätigen'));
+  assert.match(state.app.textContent, /keine echte Biometrie/);
+  assert.match(state.app.textContent, /keine biometrischen Daten/);
+  assert.equal(request.presentations.length, 0);
+  await button(state.app, 'Abbrechen').listeners.get('click')();
+  await pending;
+  assert.equal(request.presentations.length, 0);
+  assert.equal(find(state.app, (node) => node.tagName === 'dialog'), null);
+  await submit(state.app);
+  assert.equal(request.presentations.length, 1);
+  assert.equal(state.read().did, state.wallet.did);
+});
+
+test('A selected credential becoming revoked is never silently replaced by another active credential', async (t) => {
+  const state = await fixture(t);
+  state.wallet.credentials.push(await state.credential('alternative', 1));
+  state.storage.set('wallet', JSON.stringify(state.wallet));
+  const request = requestFixture(state);
+  await state.start();
+  await until(() => state.app.textContent.includes('Aktiv'));
+  request.open();
+  await until(() => state.app.textContent.includes('Mehrere Ausweise passen'));
+  const selected = find(state.app, (node) => node.tagName === 'input' && node.attributes.value === 'employee-card');
+  const alternative = find(state.app, (node) => node.tagName === 'input' && node.attributes.value === 'alternative');
+  selected.listeners.get('change')();
+  state.statusResponse = () => signedList(state.issuer, [0]);
+  await state.poll();
+  assert.equal(selected.checked, true);
+  assert.equal(selected.disabled, true);
+  assert.equal(alternative.checked, false);
+  assert.equal(alternative.disabled, false);
+  await submit(state.app);
+  assert.equal(request.presentations.length, 0);
+  assert.match(state.app.textContent, /Widerrufen|widerrufen/);
+  alternative.listeners.get('change')();
+  await submit(state.app);
+  assert.equal(request.presentations.length, 1);
+  assert.equal(sd.describeCredential(request.presentations[0]).payload.status.status_list.idx, 1);
+});
+
+test('Leaving during biometric confirmation cancels it and cannot send a late presentation', async (t) => {
+  const state = await fixture(t);
+  const request = requestFixture(state);
+  await state.start();
+  await until(() => state.app.textContent.includes('Aktiv'));
+  request.open();
+  await until(() => state.app.textContent.includes('Welche Angaben möchtest du teilen'));
+  const form = find(state.app, (node) => node.tagName === 'form');
+  const pending = form.listeners.get('submit')({ preventDefault() {} });
+  await until(() => find(state.app, (node) => node.tagName === 'dialog'));
+  state.browserEvents.get('pagehide')();
+  await pending;
+  assert.equal(request.presentations.length, 0);
+  assert.equal(find(state.app, (node) => node.tagName === 'dialog'), null);
+  assert.equal(state.timers.size, 0);
+});
+
+test('Unsupported biometric dialog is an explicit error and never bypasses confirmation', async (t) => {
+  const state = await fixture(t);
+  const createElement = document.createElement;
+  t.mock.method(document, 'createElement', (tag) => {
+    const node = createElement(tag);
+    if (tag === 'dialog') node.showModal = undefined;
+    return node;
+  });
+  const request = requestFixture(state);
+  await state.start();
+  await until(() => state.app.textContent.includes('Aktiv'));
+  request.open();
+  await until(() => state.app.textContent.includes('Welche Angaben möchtest du teilen'));
+  await submit(state.app);
+  assert.match(state.error.textContent, /Browser unterstützt die Demo-Bestätigung nicht/);
+  assert.equal(request.presentations.length, 0);
+  assert.equal(find(state.app, (node) => node.tagName === 'dialog'), null);
+});
+
+test('Wallet aliases redirect to the canonical origin with QR intact without creating another wallet or warning', async (t) => {
+  const state = await fixture(t);
+  const before = state.storage.get('wallet');
+  const requestId = crypto.randomUUID();
+  state.location.href = `http://localhost:3000/wallet.html#req=${requestId}`;
+  let destination;
+  state.location.replace = (url) => { destination = url; };
+  await state.start();
+  await until(() => Boolean(destination));
+  assert.equal(destination, `${issuerUrl}/wallet.html#req=${requestId}`);
+  assert.equal(state.storage.get('wallet'), before);
+  assert.doesNotMatch(state.app.textContent, /Nicht noch einmal|zweite Wallet|Wallet.*erstellen/);
+  assert.deepEqual(state.requests, []);
 });
 
 test('Consent polling preserves optional choices and open raw details through offline recovery', async (t) => {

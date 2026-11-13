@@ -12,6 +12,7 @@ import { EMPLOYEE_VCT, ROLES, publicOrigin } from '../public/lib/protocol.js';
 import { statusReference, verifyStatusList, isRevoked } from '../public/lib/credential-status.js';
 import { installIssuerRoutes, publicOrganisation } from './issuer-app.js';
 import { HttpError, wrap, bodyFields as requireBody, text } from './http.js';
+import { verificationChecks } from '../public/lib/verification.js';
 
 const publicDirectory = fileURLToPath(new URL('../public/', import.meta.url));
 const defaultDataDirectory = fileURLToPath(new URL('../hosted-data/', import.meta.url));
@@ -110,11 +111,12 @@ export async function createApp({
     return issuer?.state === 'approved';
   }
 
-  async function checkPresentation(request, presentation) {
+  async function checkPresentation(request, presentation, onStep) {
     const result = await sd.verifyPresentation(presentation, {
       aud: request.aud,
       nonce: request.nonce,
       isTrustedIssuer,
+      onStep,
     });
     if (!result.ok) {
       result.failedAt = ['Nachweis lesen', 'Issuer-Vertrauen', 'Issuer-Signatur', 'Gültigkeit',
@@ -162,6 +164,7 @@ export async function createApp({
         result.statusCheckedAt = new Date(clock()).toISOString();
         result.statusListExpiresAt = new Date(list.expiresAt).toISOString();
         result.steps.push('Widerrufsstatus geprüft: aktuelle signierte Statusliste, Ausweis nicht widerrufen');
+        onStep?.([...result.steps]);
       } catch (error) {
         result.ok = false;
         result.failedAt = 'Widerrufsstatus';
@@ -243,8 +246,24 @@ export async function createApp({
     // Reserve before the first await: two phones must not consume the same nonce.
     request.status = 'processing';
     const attempt = startAttempt(request, presentation);
+    const streaming = req.get('Accept') === 'application/x-ndjson';
+    const sendFrame = (frame) => {
+      if (streaming && !res.destroyed && !res.writableEnded) res.write(`${JSON.stringify(frame)}\n`);
+    };
+    if (streaming) {
+      res.status(200).set({
+        'Content-Type': 'application/x-ndjson; charset=utf-8',
+        'Cache-Control': 'no-store, no-transform',
+        'X-Accel-Buffering': 'no',
+      });
+      res.flushHeaders();
+      sendFrame({ type: 'progress', completed: 0, total: verificationChecks.length, steps: [] });
+    }
     try {
-      const result = await checkPresentation(request, presentation);
+      const result = await checkPresentation(request, presentation, (completedSteps) => {
+        attempt.steps = completedSteps;
+        sendFrame({ type: 'progress', completed: completedSteps.length, total: verificationChecks.length, steps: completedSteps });
+      });
       if (requests.get(request.id) !== request) {
         throw new HttpError(409, 'Die Anfrage wurde durch die Moderation zurückgesetzt. Bitte scanne den neuen QR-Code.');
       }
@@ -267,13 +286,24 @@ export async function createApp({
         status: request.status, identityVerified: result.ok,
         steps: result.steps, error: result.error, failedAt: result.failedAt,
       });
-      res.json(result);
+      if (streaming) {
+        sendFrame({ type: 'result', result });
+        res.end();
+      } else res.json(result);
     } catch (error) {
       request.status = 'error';
       request.result = { ok: false, steps: [], error: 'Der Check-in konnte nicht gespeichert werden. Bitte wende dich an den Empfang.' };
       Object.assign(attempt, {
         status: 'error', steps: [], error: request.result.error, failedAt: 'Check-in speichern',
       });
+      if (streaming) {
+        if (!(error instanceof HttpError) || error.status >= 500) console.error('Serverfehler:', error);
+        const result = { ...request.result, failedAt: 'Check-in speichern',
+          ...(error instanceof HttpError && error.status < 500 ? { error: error.message } : {}) };
+        sendFrame({ type: 'result', result });
+        res.end();
+        return;
+      }
       throw error;
     }
   }));

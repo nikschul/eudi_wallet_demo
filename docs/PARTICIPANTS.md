@@ -20,15 +20,12 @@ vorab unter dieser Adresse einrichten oder beim ersten Angebots-QR. Beide
 Einstiege führen zur selben Wallet. Jeder weitere Angebots- oder Empfangs-QR
 verwendet deren vorhandenen Schlüssel; eine erneute Einrichtung ist nicht nötig.
 
-Falls trotzdem eine Einrichtung erscheint: **Nicht sofort eine neue Wallet
-anlegen.** Die bisherige Wallet im selben Browser oder derselben installierten
-PWA öffnen und dort **„QR-Code scannen“** verwenden. Keinen separaten
-Kamera-In-App-Browser oder privaten Modus verwenden. Die Adresse
-mit der bisherigen Workshop-Adresse vergleichen. `localhost`, eine IP und eine
-andere Tunnel-Domain sind getrennte Speicher. Die UI zeigt die aktuelle Adresse
-an und bietet unter einem abweichenden Host keine neue Wallet-Erstellung an.
-Vorhandene Schlüssel lassen sich nicht automatisch zwischen diesen Speichern
-verschieben. Bei einer geänderten Workshop-Domain die Moderation ansprechen.
+Links von der Gerätekamera und Scans in der Wallet verwenden unter derselben
+Adresse und im selben Browserspeicher automatisch die vorhandene Wallet.
+Lokale Alias-Adressen leiten zur konfigurierten Workshop-Adresse weiter,
+einschließlich des geöffneten Angebots oder Check-ins. Private Fenster, andere
+Browser und insbesondere installierte iOS-PWAs können getrennte Speicher haben.
+Ohne Anmeldung werden Schlüssel nicht zwischen diesen Speichern übertragen.
 
 Bei einem bestätigten Adresswechsel bleiben Organisationen, Freigaben und
 Widerrufe auf dem Server erhalten. Alte Angebots-QRs sind dann ungültig; für
@@ -87,16 +84,30 @@ Empfangs-QR erneut scannen.
    Den erhaltenen Ausweis prüfen und **„Ausweis in Wallet speichern“** wählen.
    Er erscheint in der Ausweisablage; technische DID-Details sind nicht der erste Einstieg.
 5. **Kiosk:** In der Wallet den gemeinsamen Empfangs-QR scannen. Auch bei gleichzeitigen Scans
-   erhält jede Person ihre eigene einmalige Anfrage. Freizugebende Angaben
-   und Hinweis zur Kiosk-Anzeige lesen, dann bewusst zustimmen.
+   erhält jede Person ihre eigene einmalige Anfrage. Bei mehreren passenden
+   Ausweisen zuerst die gewünschte Organisation beziehungsweise den Ausweis
+   auswählen. Es wird nicht automatisch der neueste verwendet.
+6. **Datenfreigabe:** Vor-/Nachname sind für die Anwesenheitskontrolle
+   erforderlich. Die Vorschau zeigt **„Empfang erhält“** und **„Nicht als
+   Attribut geteilt“**. Die Rolle bleibt freiwillig; die ausstellende
+   Organisation ist über ihre Signatur ohnehin erkennbar.
+7. **Bestätigen:** **„Freigeben & einchecken“** öffnet die abbrechbare
+   **Demo-Biometrie**. Diese simuliert nur eine Gerätebestätigung, erfasst
+   keine Biometrie und schützt den Schlüssel nicht zusätzlich. Erst nach
+   **„Demo-Biometrie bestätigen“** signiert und sendet die Wallet.
+8. **Prüfung verfolgen:** Der Ladebalken zeigt die tatsächlich vom Empfang
+   abgeschlossenen acht Prüfungen. Bei Erfolg erscheint die Bestätigung,
+   bei Ablehnung der konkrete Prüfgrund. Keine künstlich verzögerten
+   Erfolgsmeldungen; schnelle Prüfungen können entsprechend schnell enden.
 
 Die Einrichtung und Freigabe der Organisation sowie der persönliche Check-in
 sind getrennte Schritte. Einzelne Ausweise benötigen keine nachträgliche
 Freigabe durch den Empfang. Die Wallet zeigt gespeicherte, signierte Ausweise,
 keine vermeintlich noch ausstehende Credential-Freigabe.
 
-Das Dashboard zeigt außerdem den persönlichen Versuch samt Prüfschritten oder
-Fehler. Der **Versuchscode** steht auch auf dem Handy: Er ordnet nur den
+Der Kiosk zeigt den persönlichen Versuch mit Ergebnis oder Fehler; die
+ausführlichen Prüfschritte bleiben auf deinem Smartphone sichtbar.
+Der **Versuchscode** steht auch auf dem Handy: Er ordnet nur den
 Check-in-Versuch am Kiosk zu und ist kein Geheimnis oder Ausgabecode.
 Bei abgelehnten Versuchen wird der
 angegebene Name ausdrücklich als ungeprüft markiert. Nicht freigegebene Angaben

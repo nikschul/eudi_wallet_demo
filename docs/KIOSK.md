@@ -49,7 +49,7 @@ starten; Organisationen neu auf der Zentrale registrieren.
 - <http://localhost:3000/kiosk.html> auf TV/Beamer öffnen.
   Der große **Check-in-QR** bleibt der primäre QR. Darunter zeigt der Kiosk einen
   kleineren, klar beschrifteten **öffentlichen Organisations-QR** samt sichtbarer
-  und kopierbarer `/issuer.html`-Adresse. Diese Adresse am Laptop öffnen; sie ist
+  `/issuer.html`-Adresse. Diese Adresse am Laptop öffnen; sie ist
   weder Wallet-Startseite noch privater Verwaltungs- oder Wiederherstellungslink.
   Teilnehmende registrieren ihre Organisation und warten auf deine Freigabe.
   Erst der spätere Ausweisangebots-QR öffnet die Wallet am Smartphone: einmalige
@@ -61,10 +61,17 @@ starten; Organisationen neu auf der Zentrale registrieren.
   **erfolgreiche Check-ins** (alle gespeicherten erfolgreichen Vorgänge, nicht die
   Anzahl der Personen oder Organisationen mit Check-in). Wiederholte erfolgreiche
   Check-ins derselben Person zählen jeweils einzeln; abgelehnte Versuche zählen
-  nicht mit. Daneben bleiben persönliche Versuche mit Fehlern und Prüfschritten
-  sowie die eingecheckten Personen sichtbar.
-  Pro Organisation zeigt die Liste ihren aktuellen Status **ausstehend**,
-  **freigegeben** oder **gesperrt** und ihre erfolgreichen Check-ins.
+  nicht mit. Rechts stehen oben nur kompakte Organisationsnamen mit ihrem
+  **aktuellen Vertrauen**: **freigegeben/vertraut**, **Freigabe fehlt/nicht
+  vertraut** oder **gesperrt/nicht vertraut**. Lange DIDs und technische
+  Organisationsdetails gehören nicht auf den TV.
+  Darunter zeigt das Versuchslog sichtbar **eingecheckt**, **Prüfung läuft** oder
+  **abgelehnt**, mit Uhrzeit, Organisation und kurzem Versuchscode. Während
+  einer Prüfung erscheint der zuletzt bestätigte Prüfschritt; bei Ablehnung
+  stehen Fehler und fehlgeschlagener Schritt direkt im Log. Am Empfang klären
+  und danach erneut scannen. **Heute eingecheckt** bleibt eine kleine
+  Zusammenfassung aus Namen und letzter erfolgreicher Check-in-Uhrzeit, ohne
+  Ausweisdetails oder zusätzliche Kennzahlen.
   Registrierung allein ist kein Vertrauen. Der Server erzeugt den Schlüssel;
   es gibt keinen separaten manuellen Schlüsselbeweis bei der Registrierung.
 - Den privaten lokalen Freischalt-Link aus dem **neuesten Startblock** öffnen:
@@ -90,16 +97,37 @@ starten; Organisationen neu auf der Zentrale registrieren.
   keine bedienende Person zugeordnet. Erst danach kann die Organisation
   Ausstellungsangebote erstellen. Ein Mitarbeiterausweis bindet Organisation
   und Wallet-Inhaber, nicht die Bedienung am Laptop.
-- Viele Organisationen bleiben in beiden Ansichten in einer begrenzten, scrollbar
-  bedienbaren Liste übersichtlich. Suche nach Name, DID oder Fingerabdruck;
-  in der Verwaltung lässt sich zusätzlich nach Vertrauensstatus filtern.
-  Neue Registrierungen stehen oben. In der Verwaltung einen Eintrag aufklappen,
+- **Der Kiosk ist eine passive TV-Anzeige:** keine Suche, Kopierbuttons,
+  aufklappbaren Details oder manuell scrollbar zu bedienenden Listen. Auf
+  1920 × 1080 passen QR und Übersicht gemeinsam auf den Bildschirm. Für
+  schmale Browserfenster stapelt sich das Layout ohne horizontalen Überlauf.
+  Pro Seite stehen höchstens **sechs Organisationen, drei Versuche und drei
+  Gäste** im DOM. Überzählige Einträge werden **alle zwölf Sekunden automatisch**
+  weitergeblättert; jede Liste zeigt Seite, sichtbaren Bereich und Gesamtumfang.
+  Neue Registrierungen und neue Versuche erscheinen sofort auf der ersten
+  Seite. Identische Live-Abfragen setzen weder die Seite noch ihre Lesezeit
+  zurück. Jede Liste blättert unabhängig; auch bei reduzierter Bewegung bleiben
+  zwölf Sekunden Lesezeit erhalten, ohne Animation oder Blinken. Lange Namen
+  werden auf dem TV bei Bedarf visuell gekürzt; der Hinweis **Name ungeprüft**
+  bleibt bei nicht bestätigter Identität separat sichtbar.
+  Die Verwaltung hat dagegen weiterhin eine scrollbar bedienbare Liste mit
+  Suche nach Name, DID oder Fingerabdruck und Filter nach Vertrauensstatus.
+  Neue Registrierungen stehen oben. Dort einen Eintrag aufklappen,
   um DID, Fingerabdruck, Freigabe und Wiederherstellung zu sehen. Geöffnete Details,
   angezeigte Wiederherstellungslinks, Suche und Filter bleiben bei Live-Updates erhalten.
-  Der Kiosk aktualisiert etwa alle zwei Sekunden, die Verwaltung alle fünf
+  Der Kiosk aktualisiert etwa alle anderthalb Sekunden, die Verwaltung alle fünf
   Sekunden; „Aktualisieren“ lädt die Verwaltung sofort neu. Auch das
   Sperren oder erneute Freigeben wird live angezeigt. Historische erfolgreiche Check-ins
   bleiben dabei erhalten; „Check-in-Liste leeren“ setzt deren Gesamtzahl zurück.
+  Verbindungsfehler werden mit Wiederverbindungs- und Host-Hinweis sichtbar
+  angezeigt; vorhandene Listen bleiben ausdrücklich möglicherweise veraltet
+  erhalten. Ein Fehler bei Gästen oder Übersicht blockiert die anderen
+  Bereiche nicht. Ein nicht mehr bestätigter Check-in-QR wird bis zur
+  automatischen Erholung ausgeblendet. Abgelaufene oder nach Serverneustart
+  fehlende Empfangs-Anfragen erzeugt der Kiosk selbst neu.
+  Beim Verlassen der Seite stoppen Abfrage- und Seitentimer dauerhaft, auch
+  für verspätete Antworten. Nach Wiederherstellung aus dem Browser-Seitencache
+  die Seite neu laden, um die Live-Anzeige erneut zu starten.
 - Der gemeinsame Empfangs-QR kann gleichzeitig von mehreren Smartphones
   gescannt werden. Jeder Scan erzeugt eine eigene einmalige Check-in-Anfrage;
   die persönlichen Versuche blockieren sich nicht.
@@ -126,16 +154,20 @@ Credentials frei. Die Wallet entscheidet über Empfang, Speicherung und
 Datenfreigabe. Der Empfang prüft beim Vorzeigen weiterhin Signatur, Gültigkeit,
 Wallet-Bindung und seine aktuelle Vertrauensregel. Zusätzlich wird der signierte
 Credential-Status geprüft; widerrufene Ausweise werden abgelehnt. Erfolgreiche
-Check-ins zeigen im aufklappbaren Versuch alle acht Prüfschritte. Die Replay-Demo zeigt,
+Check-ins erscheinen als bestätigter Erfolg im TV-Log; die vollständigen
+Prüfschritte sind im persönlichen Wallet-Ergebnis sichtbar. Die Replay-Demo zeigt,
 warum eine alte Presentation nicht erneut gültig ist.
 
 Vor Zustimmung erklärt die Wallet die Anzeige am Kiosk. Dort erscheinen nur
-die tatsächlich geteilten Angaben, Typ, ausstellende Organisation, Inhaberbindung und
-Zeitstempel – keine versteckten Disclosures oder vollständigen JWTs.
-Abgelehnte Versuche zeigen den ausdrücklich ungeprüften Namen, Versuchscode
+der geteilte Name, ausstellende Organisation, Ergebnis und Zeitstempel – keine
+weiteren Claims, Inhaber-DIDs, Rohdaten oder vollständigen JWTs.
+Nur ein ausdrücklich serverseitig bestätigter Name wird ohne Ungeprüft-Hinweis
+angezeigt. Unbestätigte oder abgelehnte Versuche zeigen den ausdrücklich
+ungeprüften Namen, Versuchscode
 und genauen Fehler. Die letzten 100 Versuche bleiben bis zum Serverneustart
 oder Leeren der Liste sichtbar; erfolgreiche Check-in-Protokolle liegen im Volume.
-Die Vertrauensangaben in diesen Protokollen beschreiben den historischen
+Der Kiosk zeigt diese Protokolldetails nicht an. Die Vertrauensangaben in den
+gespeicherten Protokollen beschreiben den historischen
 Prüfzeitpunkt, nicht die aktuelle Organisationsfreigabe oder den aktuellen
 Credential-Status.
 

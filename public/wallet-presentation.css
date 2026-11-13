@@ -1,0 +1,23 @@
+.credential-picker { display: grid; gap: .75rem; min-width: 0; }
+.credential-option { display: flex; align-items: flex-start; gap: .75rem; padding: 1rem; border: 2px solid var(--border, #dce5e1); border-radius: 12px; cursor: pointer; overflow-wrap: anywhere; }
+.credential-option:has(input:checked) { border-color: #179c7d; background: #edf9f4; }
+.credential-option:has(input:disabled) { opacity: .65; cursor: not-allowed; }
+.credential-option > span { display: grid; gap: .35rem; min-width: 0; }
+.credential-option input { width: auto; margin-top: .25rem; }
+.disclosure-preview { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); }
+.disclosure-preview > section { padding: .8rem; border-radius: 10px; background: #f2f6f4; min-width: 0; }
+.disclosure-preview h3 { font-size: 1rem; margin-top: 0; }
+.verification-progress progress { display: block; width: 100%; height: 1rem; accent-color: #179c7d; }
+.verification-stages { padding-left: 1.4rem; display: grid; gap: .65rem; }
+.stage-complete { color: #11664b; }
+.stage-current { font-weight: 700; }
+.stage-pending { color: #687a73; }
+.stage-failed { color: #a52c34; font-weight: 700; }
+.biometric-dialog { border: 1px solid #dce5e1; border-radius: 20px; padding: 1.5rem; max-width: min(440px, calc(100vw - 2rem)); max-height: calc(100dvh - 2rem); overflow: auto; color: #1d3530; }
+.biometric-dialog::backdrop { background: rgb(10 35 28 / 65%); }
+.biometric-symbol { text-align: center; font-size: 5rem; line-height: 1.2; color: #179c7d; }
+.biometric-actions { display: grid; gap: .75rem; margin-top: 1.25rem; }
+@media (prefers-reduced-motion: no-preference) {
+  .stage-current { animation: verification-pulse 1.5s ease-in-out infinite; }
+  @keyframes verification-pulse { 50% { opacity: .55; } }
+}

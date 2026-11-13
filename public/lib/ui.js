@@ -1,4 +1,5 @@
 import { texts } from './texts.js';
+import { readVerificationStream } from './verification.js';
 
 export const labels = {
   given_name: 'Vorname', family_name: 'Nachname', organisation: 'Organisation', role: 'Rolle',
@@ -50,20 +51,23 @@ export class ApiError extends Error {
 }
 
 export async function api(route, {
-  body, offerToken, adminToken, baseUrl = '', timeoutMs = 15000, credentials = 'omit',
+  body, offerToken, adminToken, baseUrl = '', timeoutMs = 15000, credentials = 'omit', onProgress,
 } = {}) {
   if (!['omit', 'same-origin'].includes(credentials)) {
     throw new TypeError('Ungültiger Cookie-Modus: Erlaubt sind omit oder same-origin.');
   }
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const timeoutMessage = onProgress
+    ? 'Die Live-Prüfung antwortet nicht rechtzeitig. Das Ergebnis kann bereits gespeichert sein. Prüfe den Versuch am Kiosk, bevor du den QR erneut scannst.'
+    : 'Der Server antwortet nicht rechtzeitig. Bitte versuche es erneut.';
   try {
     let response;
     try {
       response = await fetch(`${baseUrl}/api${route}`, {
         method: body === undefined ? 'GET' : 'POST',
         headers: {
-          Accept: 'application/json',
+          Accept: onProgress ? 'application/x-ndjson' : 'application/json',
           ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
           ...(offerToken ? { 'X-Offer-Token': offerToken } : {}),
           ...(adminToken ? { 'X-Admin-Token': adminToken } : {}),
@@ -75,16 +79,19 @@ export async function api(route, {
       });
     } catch (error) {
       throw new Error(controller.signal.aborted
-        ? 'Der Server antwortet nicht rechtzeitig. Bitte versuche es erneut.'
+        ? timeoutMessage
         : 'Der Server ist nicht erreichbar. Prüfe deine Internetverbindung und versuche es erneut.', { cause: error });
     }
     let data;
     try {
-      data = await response.json();
+      data = onProgress && response.ok && response.headers.get('content-type')?.includes('application/x-ndjson')
+        ? await readVerificationStream(response, onProgress)
+        : await response.json();
     } catch (error) {
       throw new Error(controller.signal.aborted
-        ? 'Der Server antwortet nicht rechtzeitig. Bitte versuche es erneut.'
-        : 'Der Server hat keine lesbare Antwort geschickt. Bitte versuche es erneut.', { cause: error });
+        ? timeoutMessage
+        : onProgress ? `Die Live-Prüfung wurde unterbrochen: ${error.message}`
+          : 'Der Server hat keine lesbare Antwort geschickt. Bitte versuche es erneut.', { cause: error });
     }
     if (!response.ok) throw new ApiError(data?.error || 'Die Anfrage ist fehlgeschlagen.', response.status);
     return data;

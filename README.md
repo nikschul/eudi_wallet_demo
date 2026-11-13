@@ -6,6 +6,10 @@ und am gemeinsamen Empfang einchecken. Der Workshop zeigt
 den Unterschied zwischen **gültiger Signatur** und **Vertrauen in den Aussteller**.
 Zusätzlich wird der **Widerrufsstatus des einzelnen Ausweises** geprüft.
 
+**Host ist schon eingerichtet?** Die kurze
+[Schritt-für-Schritt-Startanleitung](docs/WORKSHOP_START.md) enthält nur den
+Workshop-Start mit dem vorgebauten Image, ohne Installationsanleitung.
+
 ## Ablauf und Architektur
 
 - **Ein zentraler Host:** Die Moderation betreibt genau eine App mit einer
@@ -421,8 +425,9 @@ Optional für Entwicklung mit Node.js 24 LTS: `npm ci`, `npm run check`, `npm te
    unseres Workshops, keine universelle Voraussetzung für jede SSI-Ausstellung.
 2. **Wallet einmalig einrichten:** Auf dem Smartphone unter der festen
    Workshop-Adresse, vorab oder beim ersten Angebots-QR. Weitere Scans verwenden
-   dieselbe Wallet und denselben Schlüssel. Unter einem abweichenden Host wird
-   keine zweite Wallet angelegt; die UI verweist auf die konfigurierte Adresse.
+   dieselbe Wallet und denselben Schlüssel innerhalb desselben Browserspeichers.
+   Unter einem abweichenden Host wird keine zweite Wallet angelegt; die Seite
+   leitet mit dem geöffneten QR zur konfigurierten Workshop-Adresse weiter.
 3. **Ausweis erhalten:** Angebots-QR scannen, den nur am Notebook angezeigten
    sechsstelligen Ausgabecode in der Wallet eingeben. Falsche Eingaben werden
    direkt am Formular angezeigt; fünf Fehlversuche beenden das Angebot.
@@ -436,6 +441,15 @@ Optional für Entwicklung mit Node.js 24 LTS: `npm ci`, `npm run check`, `npm te
 5. **Vorzeigen:** Empfangs-QR scannen und Angaben bewusst teilen. Der Verifier
    prüft Signatur, Gültigkeit, Bindung, sein aktuelles Issuer-Vertrauen und
    eine aktuelle signierte Widerrufsstatusliste.
+
+Bei mehreren passenden Ausweisen entscheidet die Wallet-Nutzerin oder der
+Wallet-Nutzer ausdrücklich, welcher Ausweis vorgezeigt wird. Vor der Signatur
+zeigt die Demo eine abbrechbare **Demo-Biometrie**: keine echte Geräteabfrage,
+keine biometrischen Daten und kein zusätzlicher technischer Schutz. Erst nach
+der Bestätigung werden die gewählten Disclosures signiert und übertragen.
+Die Wallet zeigt die tatsächlichen acht Prüfungen des Empfangs als Live-Fortschritt,
+nicht als zeitgesteuerte Erfolgssimulation. Namen bleiben für die
+Anwesenheitskontrolle erforderlich; die Rolle bleibt freiwillig.
 
 Die drei Dashboard-Zustände lauten entsprechend **„Issuer registriert“**,
 **„Issuer vertrauenswürdig“** und **„Eingecheckt“**. Die beiden aggregierten

@@ -253,7 +253,7 @@ test('Hidden/pagehide/navigation cancellation invalidates late decoding and does
   assert.deepEqual(state.states.map(({ state }) => state), ['starting', 'scanning']);
 });
 
-test('PWA v8 caches only explicit same-origin shell/decoder assets, never APIs, camera media or arbitrary QR targets', async () => {
+test('PWA v9 caches only explicit same-origin shell/decoder assets, never APIs, camera media or arbitrary QR targets', async () => {
   const handlers = new Map();
   let shell;
   const context = {
@@ -261,7 +261,7 @@ test('PWA v8 caches only explicit same-origin shell/decoder assets, never APIs, 
     self: { location: { origin }, addEventListener: (name, handler) => handlers.set(name, handler) },
     caches: {
       open: async (name) => {
-        assert.equal(name, 'eudi-shell-v8');
+        assert.equal(name, 'eudi-shell-v9');
         return { addAll: async (paths) => { shell = Array.from(paths); } };
       },
     },
@@ -272,6 +272,7 @@ test('PWA v8 caches only explicit same-origin shell/decoder assets, never APIs, 
   await installing;
   for (const path of [
     '/wallet.html', '/wallet.js', '/issuer.html', '/issuer.js', '/issuer.css', '/wallet-scanner.js', '/wallet-scanner.css',
+    '/wallet-presentation.css', '/kiosk.css', '/lib/verification.js',
     '/vendor/qr-scanner/qr-scanner.min.js', '/vendor/qr-scanner/qr-scanner-worker.min.js',
   ]) assert.ok(shell.includes(path), `Missing shell asset: ${path}`);
   assert.ok(shell.every((path) => path.startsWith('/') && !path.includes('/api/') && !path.includes('#') && !path.includes('?')));

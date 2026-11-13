@@ -2,7 +2,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createContext, runInContext } from 'node:vm';
 import { createApp } from '../server/app.js';
@@ -88,6 +87,29 @@ function fixture(count = 180) {
   };
 }
 
+function kioskFeed(data = fixture(), people = []) {
+  const config = {
+    publicUrl: 'https://workshop.example.org',
+    issuerSetupUrl: 'https://workshop.example.org/issuer.html',
+    issuerSetupQrDataUrl: 'data:image/png;base64,ORGANISATION_SETUP',
+  };
+  const feed = { calls: [], failures: new Map(), qrCount: 0, requestStatus: 'pending', data, people, config };
+  feed.api = async (route, options) => {
+    feed.calls.push({ route, options });
+    if (feed.failures.has(route)) throw feed.failures.get(route);
+    if (route === '/config') return config;
+    if (route === '/dashboard') return feed.data;
+    if (route === '/attendees') return feed.people;
+    if (route === '/requests') {
+      const id = `qr-${++feed.qrCount}`;
+      return { id, qrDataUrl: `data:image/png;base64,${id}`, url: `${config.publicUrl}/wallet.html#req=${id}` };
+    }
+    if (route.startsWith('/requests/')) return { status: feed.requestStatus };
+    throw new Error(`Unexpected API route: ${route}`);
+  };
+  return feed;
+}
+
 function surface(page, initial = fixture()) {
   const ids = new Map([...source(`${page}.html`).matchAll(/id="([^"]+)"/g)]
     .map(([, id]) => [id, new Element()]));
@@ -98,7 +120,7 @@ function surface(page, initial = fixture()) {
       element.document = document;
       return element;
     },
-    getElementById: (id) => ids.get(id), activeElement: null,
+    getElementById: (id) => ids.get(id), querySelectorAll: () => [], activeElement: null,
   };
   for (const element of ids.values()) element.document = document;
   let data = initial;
@@ -106,6 +128,10 @@ function surface(page, initial = fixture()) {
   const mutations = [];
   const confirmations = [];
   const clipboard = [];
+  const timers = new Map();
+  const pageListeners = new Map();
+  let now = Date.parse('2026-11-12T12:00:00Z');
+  let timerId = 0;
   let confirmed = true;
   let adminRequest = async (route, options) => {
     if (route.endsWith('/recovery')) return {
@@ -116,9 +142,21 @@ function surface(page, initial = fixture()) {
     Object.assign(entry, options.body, { state: options.body.trusted ? 'approved' : 'suspended' });
   };
   const context = createContext({
-    Node: Element, document, window: { addEventListener() {} },
+    Node: Element, document,
+    window: {
+      addEventListener(name, handler) {
+        if (!pageListeners.has(name)) pageListeners.set(name, []);
+        pageListeners.get(name).push(handler);
+      },
+    },
+    Date: class extends Date { static now() { return now; } },
     URL, navigator: { clipboard: { async writeText(text) { clipboard.push(text); } } },
-    setTimeout() {}, clearTimeout() {},
+    setTimeout(handler, delay = 0) {
+      const id = ++timerId;
+      timers.set(id, { handler, at: now + delay });
+      return id;
+    },
+    clearTimeout(id) { timers.delete(id); },
     confirm: (message) => { confirmations.push(message); return confirmed; },
     FormData: class {
       constructor(form) { this.inputs = form.querySelectorAll('input'); }
@@ -139,12 +177,13 @@ function surface(page, initial = fixture()) {
   });
   const helpers = source('lib/ui.js').replace(/^import .*;\r?$/gm, '').replace(/^export /gm, '');
   const script = source(`${page}.js`).replace(/^import .*;\r?$/gm, '');
-  const bootstrap = page === 'admin' ? '\nrun(async () => {' : "\nwindow.addEventListener('pagehide'";
+  const bootstrap = page === 'admin' ? '\nrun(async () => {' : '\npoll();';
   assert.ok(script.includes(bootstrap), `${page}: bootstrap boundary exists`);
   runInContext(`${helpers}\n${script.slice(0, script.indexOf(bootstrap))}
-    globalThis.surface = { ${page === 'admin' ? 'refresh' : 'dashboard, attendees, applyConfig'}, filterIssuers, issuerViews };`, context);
+    globalThis.surface = { ${page === 'admin' ? 'refresh, filterIssuers, issuerViews'
+    : 'dashboard, attendees, applyConfig, poll, stop, pagers'} };`, context);
   return {
-    ids, document, ui: context.surface, mutations, confirmations, clipboard,
+    ids, document, ui: context.surface, mutations, confirmations, clipboard, timers,
     async start() { if (page === 'admin') await accessOptions.onUnlock(); else await context.surface.dashboard(); },
     async refresh(next = data) {
       data = next;
@@ -155,10 +194,26 @@ function surface(page, initial = fixture()) {
     setAdmin: (handler) => { adminRequest = handler; },
     setConfirm: (value) => { confirmed = value; },
     setClipboard: (value) => { context.navigator.clipboard = value; },
+    async emitPage(name, event = {}) {
+      await Promise.all((pageListeners.get(name) || []).map((handler) => handler(event)));
+    },
+    async advance(ms) {
+      const until = now + ms;
+      for (;;) {
+        const next = [...timers.entries()].filter(([, timer]) => timer.at <= until)
+          .sort((a, b) => a[1].at - b[1].at)[0];
+        if (!next) break;
+        const [id, timer] = next;
+        timers.delete(id);
+        now = timer.at;
+        await timer.handler();
+      }
+      now = until;
+    },
   };
 }
 
-test('Both dashboards have exactly the requested aggregate metrics and retain detailed lists', () => {
+test('Both dashboards have exactly the requested aggregate metrics and retain their lists', () => {
   for (const page of ['kiosk', 'admin']) {
     const html = source(`${page}.html`);
     const metrics = html.match(/<div[^>]*class="progress-stats"[^>]*>([\s\S]*?)<\/div>\s*<\/div>/)?.[1];
@@ -297,54 +352,67 @@ test('Admin discards late dashboard responses after lock and clears organisation
   assert.equal(view.recoveryResult.hidden, true);
 });
 
-test('Kiosk uses total successful visits, supports 180 searchable organisations and preserves attempt details', async () => {
+test('Kiosk is passive with no click, expansion, search or scrolling dependencies', () => {
+  const html = source('kiosk.html');
+  const script = source('kiosk.js');
+  const css = source('kiosk.css');
+  assert.doesNotMatch(html, /<(?:details|summary|button|input|select)\b|tabindex=/);
+  assert.doesNotMatch(script, /addEventListener\(['"](?:click|input)|clipboard|\.open\b/);
+  assert.doesNotMatch(css, /overflow(?:-[xy])?:\s*(?:auto|scroll)|@keyframes/);
+  assert.match(css, /prefers-reduced-motion:\s*reduce/);
+  assert.match(css, /grid-template-columns: minmax\(0, 1fr\)/);
+  assert.match(html, /href="\/kiosk\.css"/);
+  assert.doesNotMatch(html, /href="\/styles\.css"/);
+  assert.match(html, /Mehrere Handys können gleichzeitig denselben QR scannen/);
+  assert.ok(html.indexOf('id="progress-list"') < html.indexOf('id="attempts"'));
+  assert.ok(html.indexOf('id="attempts"') < html.indexOf('id="attendees"'));
+});
+
+test('Kiosk uses total visits and bounds 180 organisations while trust, removals and empty states stay live', async () => {
   const data = fixture();
   const app = surface('kiosk', data);
   await app.start();
   assert.equal(app.ids.get('registered-count').textContent, '180');
   assert.equal(app.ids.get('checkin-count').textContent, '928');
-  assert.equal(app.ids.get('progress-list').children.length, 180);
-  const attempt = app.ids.get('attempts').querySelector('details');
-  attempt.open = true;
-  app.ids.get('progress-list').scrollTop = 160;
-  const view = app.ui.issuerViews.get(data.issuers[0].did);
-  app.ids.get('issuer-search').value = 'Kein Treffer für diese Suche';
-  app.ui.filterIssuers();
-  assert.equal(app.ids.get('issuer-no-match').hidden, false);
-  assert.equal(view.node.hidden, true);
-  app.ids.get('issuer-search').value = 'DID:EXAMPLE:ISSUER-0';
-  app.ui.filterIssuers();
-  assert.equal(view.node.hidden, false);
-  data.issuers[0].trusted = true;
-  data.issuers[0].state = 'approved';
-  data.issuers[0].checkinCount = 12;
+  const list = app.ids.get('progress-list');
+  assert.equal(list.children.length, 6);
+  assert.match(list.children[0].textContent, /Organisation 179/);
+  assert.match(app.ids.get('issuer-pages').textContent, /Seite 1\/30 · 1–6 von 180/);
+  assert.doesNotMatch(list.textContent, /did:|KEY-|erfolgreiche Check-in/);
+  const node = list.children[0];
   await app.refresh();
-  assert.match(view.status.textContent, /Freigegeben/);
-  assert.match(view.checkins.textContent, /^12 /);
-  assert.equal(app.ids.get('attempts').querySelector('details'), attempt);
-  assert.equal(attempt.open, true);
-  assert.equal(app.ids.get('progress-list').scrollTop, 160);
-  data.issuers[0].trusted = false;
-  data.issuers[0].state = 'suspended';
+  assert.equal(list.children[0], node, 'Identical polls preserve the rendered page');
+  data.issuers[179].trusted = true;
+  data.issuers[179].state = 'approved';
   await app.refresh();
-  assert.match(view.status.textContent, /Gesperrt/);
+  assert.match(list.children[0].textContent, /Vertraut · freigegeben/);
+  data.issuers[179].state = 'suspended';
+  await app.refresh();
+  assert.match(list.children[0].textContent, /Nicht vertraut · gesperrt/);
+  data.issuers[179].state = 'pending';
+  await app.refresh();
+  assert.match(list.children[0].textContent, /Nicht vertraut · Freigabe fehlt/);
   assert.equal(app.ids.get('checkin-count').textContent, '928');
-  data.issuers[0].state = 'pending';
+  data.issuers.pop();
   await app.refresh();
-  assert.match(view.status.textContent, /Ausstehend/);
+  assert.doesNotMatch(list.textContent, /Organisation 179/);
+  data.issuers.push(issuer(180));
+  data.stats.registered = 180;
+  await app.refresh();
+  assert.match(list.children[0].textContent, /Organisation 180/);
   data.issuers = [];
   data.stats.registered = 0;
   data.stats.checkins = 0;
   data.attempts = [];
   await app.refresh();
-  assert.equal(app.ui.issuerViews.size, 0);
-  assert.equal(app.ids.get('issuer-empty').hidden, false);
-  assert.equal(app.ids.get('issuer-no-match').hidden, true);
+  assert.match(list.textContent, /Noch keine Organisation registriert/);
+  assert.match(app.ids.get('attempts').textContent, /Noch keine Prüfungen/);
+  assert.equal(app.ids.get('issuer-pages').textContent, 'Keine Einträge');
   assert.equal(app.ids.get('checkin-count').textContent, '0');
-  assert.equal(app.ids.get('kiosk-result').hidden, true);
+  assert.equal(app.timers.size, 0);
 });
 
-test('Kiosk renders all eight verifier steps without counting rejected attempts as successful check-ins', async () => {
+test('Kiosk shows verified, unverified, live and failed outcomes without opening details or inflating visits', async () => {
   const data = fixture(20);
   data.stats.checkins = 12;
   data.attempts[0].steps = [
@@ -353,6 +421,7 @@ test('Kiosk renders all eight verifier steps without counting rejected attempts 
   ];
   data.attempts.push({
     ...data.attempts[0], id: 'rejected-attempt-1234', status: 'error',
+    name: 'Behaupteter Name', identityVerified: false,
     steps: data.attempts[0].steps.slice(0, 7),
     error: 'Der Ausweis wurde widerrufen.', failedAt: 'Credential-Status',
   });
@@ -362,26 +431,41 @@ test('Kiosk renders all eight verifier steps without counting rejected attempts 
   assert.equal(app.ids.get('checkin-count').textContent, '12');
   const attempts = app.ids.get('attempts');
   assert.equal(attempts.children.length, 2);
-  const checks = attempts.children[0].querySelector('ol');
-  assert.equal(checks.children.length, 8);
-  assert.match(checks.children[7].textContent, /Signierter Credential-Status gültig/);
+  assert.match(attempts.children[0].textContent, /Demo-Person.*Eingecheckt/);
+  assert.doesNotMatch(attempts.children[0].textContent, /ungeprüft/);
   assert.match(attempts.children[1].textContent, /widerrufen/);
   assert.match(attempts.children[1].textContent, /Abgelehnt/);
+  assert.match(attempts.children[1].textContent, /Behaupteter Name \(ungeprüft\)/);
+  assert.match(attempts.children[1].textContent, /Credential-Status/);
+  assert.match(attempts.children[1].textContent, /Am Empfang klären, danach erneut scannen/);
+  assert.equal(attempts.querySelectorAll('details').length, 0);
   data.attempts.unshift({
-    ...data.attempts[1], id: 'another-rejected-attempt',
+    ...data.attempts[1], id: 'processing-attempt', status: 'processing',
+    steps: ['Signierter Credential-Status gültig'], error: undefined,
   });
   await app.refresh();
   assert.equal(attempts.children.length, 3);
+  assert.match(attempts.children[0].textContent, /Prüfung läuft/);
+  assert.match(attempts.children[0].textContent, /Zuletzt geprüft: Signierter Credential-Status gültig/);
   assert.equal(app.ids.get('checkin-count').textContent, '12');
+  data.attempts[0].status = 'done';
+  await app.refresh();
+  assert.match(attempts.children[0].textContent, /Behaupteter Name \(ungeprüft\)/,
+    'Only identityVerified true permits a verified name, even for an inconsistent done result');
 });
 
 test('Organisation names, public keys and fixed identity replace individual operator assignment', async () => {
   for (const page of ['admin', 'kiosk']) {
     const app = surface(page, fixture(16));
     await app.start();
-    const view = app.ui.issuerViews.get(issuer(0).did);
-    assert.equal(view.name.textContent, 'Organisation 0');
-    assert.equal(view.label.textContent, issuer(0).did);
+    if (page === 'admin') {
+      const view = app.ui.issuerViews.get(issuer(0).did);
+      assert.equal(view.name.textContent, 'Organisation 0');
+      assert.equal(view.label.textContent, issuer(0).did);
+    } else {
+      assert.match(app.ids.get('progress-list').textContent, /Organisation 15/);
+      assert.doesNotMatch(app.ids.get('progress-list').textContent, /did:example/);
+    }
     assert.doesNotMatch(source(`${page}.js`) + source(`${page}.html`),
       /ownerName|employeeName|issuerOwner|Geprüfter Name der Person|Zuordnung bestätigen|Issuer gehört zu Mitarbeitendem/);
     assert.match(source(`${page}.html`), /Registrierte Organisationen/);
@@ -467,7 +551,7 @@ test('Failed approval reports its error, preserves pending state and enables an 
   assert.equal(app.ids.get('notice').textContent, '');
 });
 
-test('Kiosk secondary QR is public organisation setup with a visible and copyable laptop URL', async () => {
+test('Kiosk secondary QR is public organisation setup with a visible laptop URL and no copy control', () => {
   const app = surface('kiosk', fixture(12));
   const config = {
     publicUrl: 'https://workshop.example.org',
@@ -480,18 +564,13 @@ test('Kiosk secondary QR is public organisation setup with a visible and copyabl
   assert.equal(app.ids.get('issuer-setup-qr').hidden, false);
   assert.equal(app.ids.get('issuer-setup-link').href, config.issuerSetupUrl);
   assert.equal(app.ids.get('issuer-setup-link').textContent, config.issuerSetupUrl);
-  assert.equal(app.ids.get('copy-issuer-setup').disabled, false);
-  await app.ids.get('copy-issuer-setup').emit('click');
-  assert.deepEqual(app.clipboard, [config.issuerSetupUrl]);
-  app.setClipboard(undefined);
-  await app.ids.get('copy-issuer-setup').emit('click');
-  assert.match(app.ids.get('error').textContent, /manuell/);
+  assert.equal(app.ids.has('copy-issuer-setup'), false);
   const html = source('kiosk.html');
   assert.ok(html.indexOf('id="checkin-qr"') < html.indexOf('id="issuer-setup-qr"'));
   assert.match(html, /id="checkin-qr" width="640" height="640"/);
   assert.match(html, /id="issuer-setup-qr" width="112" height="112"/);
   assert.match(html, /Organisation einrichten · am Laptop/);
-  assert.match(html, /einmal einrichten, Code eingeben, dann den Ausweis automatisch empfangen/);
+  assert.match(html, /Danach den Ausweisangebots-QR mit dem Handy scannen/);
   assert.doesNotMatch(source('kiosk.js'), /startQrDataUrl|managementAccess|admin-token|org-access/);
   assert.match(html, /<li>Wallet\/PWA öffnen<\/li>/);
   assert.match(html, /„QR-Code scannen“ wählen/);
@@ -507,14 +586,15 @@ test('Kiosk secondary QR is public organisation setup with a visible and copyabl
   assert.throws(() => app.ui.applyConfig({ publicUrl: config.publicUrl }), /Organisationseinrichtung fehlt/);
 });
 
-test('Kiosk history binds organisation and holder and retains historical trust independently of current state', async () => {
+test('Kiosk attendees stay a compact private summary, independent of current organisational trust', async () => {
   const data = fixture(12);
   const app = surface('kiosk', data);
   await app.start();
   const checkin = {
     credentialType: 'EmployeeCredential', credentialId: 'credential-1234567890',
     issuerName: 'Organisation 0', issuerDid: issuer(0).did,
-    holderDid: 'did:example:holder-1', claims: { given_name: 'Demo', family_name: 'Gast' },
+    holderDid: 'did:example:holder-1',
+    claims: { given_name: 'Demo', family_name: 'Gast', role: 'UNDISCLOSED_SENTINEL' },
     time: '2026-11-12T13:00:00Z', trustedAtCheckin: true,
   };
   const people = [{
@@ -524,32 +604,243 @@ test('Kiosk history binds organisation and holder and retains historical trust i
   app.setApi(async () => people);
   await app.ui.attendees();
   const list = app.ids.get('attendees');
-  assert.match(list.textContent, /2 Check-in\(s\) · Organisation 0/);
-  assert.match(list.textContent, /Ausstellende Organisation: Organisation 0/);
-  assert.match(list.textContent, /heutige Organisationsfreigabe und aktueller Ausweiswiderruf sind davon unabhängig/);
-  const records = list.querySelectorAll('pre');
-  assert.equal(records.length, 2);
-  for (const record of records) {
-    const metadata = JSON.parse(record.textContent);
-    assert.equal(metadata.issuerDid, checkin.issuerDid);
-    assert.equal(metadata.holderDid, checkin.holderDid);
-    assert.equal(metadata.issuerName, 'Organisation 0');
-    assert.equal(metadata.trustedAtCheckin, true);
-    assert.deepEqual(metadata.sharedClaims, checkin.claims);
-  }
-  const detail = list.querySelector('details');
-  detail.open = true;
+  assert.match(list.textContent, /Demo Gast/);
+  assert.equal(list.querySelectorAll('time').length, 1);
+  assert.doesNotMatch(list.textContent, /Organisation 0|did:|credential-|UNDISCLOSED_SENTINEL|Check-in\(s\)/);
+  assert.equal(list.querySelectorAll('pre').length, 0);
+  assert.equal(list.querySelectorAll('details').length, 0);
+  const person = list.children[0];
   await app.ui.attendees();
-  assert.equal(list.querySelector('details'), detail);
+  assert.equal(list.children[0], person);
   data.issuers[0].state = 'suspended';
   app.setApi(async () => data);
   await app.refresh();
-  assert.equal(list.querySelector('details').open, true);
-  assert.equal(JSON.parse(records[0].textContent).trustedAtCheckin, true);
+  assert.equal(list.children[0], person);
+  app.setApi(async () => []);
+  await app.ui.attendees();
+  assert.match(list.textContent, /Noch niemand eingecheckt/);
+});
+
+test('Kiosk automatically surfaces all 180 organisations, 100 attempts and 90 guests with bounded DOM', async () => {
+  const data = fixture();
+  data.attempts = Array.from({ length: 100 }, (_, index) => ({
+    ...data.attempts[0], id: `attempt-${index}`, name: `Gast ${index}`,
+  }));
+  const people = Array.from({ length: 90 }, (_, index) => ({
+    holderDid: `did:example:guest-${index}`, name: `Person ${index}`, time: data.attempts[0].time,
+  }));
+  const app = surface('kiosk', data);
+  app.setApi(kioskFeed(data, people).api);
+  await app.start();
+  await app.ui.attendees();
+  const seen = { 'progress-list': new Set(), attempts: new Set(), attendees: new Set() };
+  for (let page = 0; page < 34; page += 1) {
+    for (const [id, limit] of [['progress-list', 6], ['attempts', 3], ['attendees', 3]]) {
+      const list = app.ids.get(id);
+      assert.ok(list.children.length <= limit);
+      assert.equal(list.querySelectorAll('details').length, 0);
+      for (const name of list.querySelectorAll('strong')) seen[id].add(name.textContent);
+    }
+    assert.equal(app.timers.size, 1, 'A single paging timer serves every list');
+    await app.advance(12000);
+  }
+  assert.equal(seen['progress-list'].size, 180);
+  assert.equal(seen.attempts.size, 100);
+  assert.equal(seen.attendees.size, 90);
+  assert.equal(app.ui.pagers.attempts.page, 0);
+  await app.advance(26 * 12000);
+  assert.equal(app.ui.pagers.issuers.page, 0);
+  assert.match(app.ids.get('issuer-pages').textContent, /Seite 1\/30/);
+});
+
+test('Kiosk identical polls preserve page dwell and DOM; new concurrent scans immediately surface', async () => {
+  const data = fixture(18);
+  data.attempts = Array.from({ length: 20 }, (_, index) => ({
+    ...data.attempts[0], id: `attempt-${index}`, name: `Gast ${index}`,
+  }));
+  const app = surface('kiosk', data);
+  await app.start();
+  await app.advance(12000);
+  assert.equal(app.ui.pagers.issuers.page, 1);
+  assert.equal(app.ui.pagers.attempts.page, 1);
+  const organisation = app.ids.get('progress-list').children[0];
+  const attempt = app.ids.get('attempts').children[0];
+  const deadline = app.ui.pagers.attempts.nextAt;
+  for (let poll = 0; poll < 7; poll += 1) {
+    await app.advance(1500);
+    await app.refresh(JSON.parse(JSON.stringify(data)));
+    assert.equal(app.ui.pagers.attempts.page, 1);
+    assert.equal(app.ui.pagers.attempts.nextAt, deadline);
+    assert.equal(app.ids.get('progress-list').children[0], organisation);
+    assert.equal(app.ids.get('attempts').children[0], attempt);
+  }
+  data.issuers[0].checkinCount = 99;
+  await app.refresh(data);
+  assert.equal(app.ids.get('progress-list').children[0], organisation, 'Hidden metadata does not rebuild the TV');
+  await app.advance(1500);
+  assert.equal(app.ui.pagers.attempts.page, 2);
+  data.attempts.unshift(...Array.from({ length: 3 }, (_, index) => ({
+    ...data.attempts[0], id: `concurrent-${index}`, name: `Neuer Scan ${index}`,
+    status: 'processing', identityVerified: false,
+  })));
+  await app.refresh();
+  assert.equal(app.ui.pagers.attempts.page, 0);
+  for (let index = 0; index < 3; index += 1) {
+    assert.match(app.ids.get('attempts').children[index].textContent, new RegExp(`Neuer Scan ${index} \\(ungeprüft\\)`));
+  }
+  assert.equal(app.ui.pagers.issuers.page, 2, 'Scans do not reset organisation paging');
+  assert.equal(app.ids.get('checkin-count').textContent, '928');
+  data.stats.checkins += 3;
+  for (const attempt of data.attempts.slice(0, 3)) {
+    attempt.status = 'done';
+    attempt.identityVerified = true;
+  }
+  await app.refresh();
+  assert.equal(app.ids.get('checkin-count').textContent, '931');
+  assert.doesNotMatch(app.ids.get('attempts').textContent, /Neuer Scan \d \(ungeprüft\)/);
+});
+
+test('Kiosk errors preserve data, report staleness and recover automatically without blocking other sections', async () => {
+  const app = surface('kiosk', fixture(18));
+  const feed = kioskFeed(fixture(18), [{ name: 'Gast', time: '2026-11-12T12:00:00Z' }]);
+  app.setApi(feed.api);
+  await app.ui.poll();
+  const organisation = app.ids.get('progress-list').children[0];
+  const person = app.ids.get('attendees').children[0];
+  feed.failures.set('/dashboard', new Error('Dashboard nicht erreichbar.'));
+  feed.failures.set('/attendees', new Error('Gäste nicht erreichbar.'));
+  await app.advance(1500);
+  assert.equal(app.ids.get('progress-list').children[0], organisation);
+  assert.equal(app.ids.get('attendees').children[0], person);
+  assert.match(app.ids.get('dashboard-error').textContent, /Dashboard nicht erreichbar.*veraltet.*Automatischer neuer Versuch/);
+  assert.match(app.ids.get('attendees-error').textContent, /Gäste nicht erreichbar.*Host informieren/);
+  assert.equal(app.ids.get('checkin-qr').hidden, false, 'Dashboard failures do not remove a working QR');
+  feed.failures.delete('/attendees');
+  await app.advance(1500);
+  assert.equal(app.ids.get('attendees-error').hidden, true);
+  assert.equal(app.ids.get('dashboard-error').hidden, false, 'An unrelated successful response does not clear errors');
+  feed.failures.clear();
+  feed.failures.set('/requests/qr-1', new Error('QR-Verbindung unterbrochen.'));
+  await app.advance(1500);
+  assert.equal(app.ids.get('dashboard-error').hidden, true);
+  assert.match(app.ids.get('error').textContent, /QR-Verbindung unterbrochen.*Automatischer neuer Versuch/);
+  assert.equal(app.ids.get('checkin-qr').hidden, true, 'An unconfirmed stale QR is not offered for scanning');
+  assert.equal(app.ids.get('qr-loading').hidden, false);
+  feed.failures.clear();
+  await app.advance(1500);
+  assert.equal(app.ids.get('error').hidden, true);
+  assert.equal(app.ids.get('checkin-qr').hidden, false);
+  assert.equal(app.ids.get('attendees').children[0], person);
+});
+
+test('Kiosk initial failures are visible instead of false empty lists; configuration retries independently', async () => {
+  const app = surface('kiosk');
+  const feed = kioskFeed(fixture(0));
+  for (const route of ['/config', '/dashboard', '/attendees']) {
+    feed.failures.set(route, new Error('Verbindung fehlt.'));
+  }
+  app.setApi(feed.api);
+  await app.ui.poll();
+  for (const id of ['error', 'dashboard-error', 'attendees-error']) {
+    assert.equal(app.ids.get(id).hidden, false);
+    assert.match(app.ids.get(id).textContent, /Verbindung fehlt.*Automatischer neuer Versuch/);
+  }
+  assert.notEqual(app.ui.pagers.issuers.signature, '[]', 'Failure is not interpreted as an empty successful result');
+  feed.failures.clear();
+  await app.advance(1500);
+  assert.equal(app.ids.get('issuer-setup-link').textContent, feed.config.issuerSetupUrl);
+  assert.equal(app.ids.get('checkin-qr').hidden, false);
+  assert.match(app.ids.get('progress-list').textContent, /Noch keine Organisation registriert/);
+});
+
+test('Kiosk QR renews on expiry or missing request without rotating after each successful visitor', async () => {
+  const app = surface('kiosk', fixture(0));
+  const feed = kioskFeed(fixture(0));
+  app.setApi(feed.api);
+  await app.ui.poll();
+  assert.equal(feed.qrCount, 1);
+  feed.requestStatus = 'done';
+  await app.advance(1500);
+  assert.equal(feed.qrCount, 1);
+  feed.requestStatus = 'expired';
+  await app.advance(1500);
+  assert.equal(feed.qrCount, 2);
+  assert.match(app.ids.get('checkin-link').href, /#req=qr-2$/);
+  feed.requestStatus = 'pending';
+  feed.failures.set('/requests/qr-2', Object.assign(new Error('Nicht gefunden'), { status: 404 }));
+  await app.advance(1500);
+  assert.equal(feed.qrCount, 3);
+  assert.match(app.ids.get('checkin-qr').src, /qr-3$/);
+  const creation = feed.calls.filter(({ route }) => route === '/requests');
+  assert.ok(creation.every(({ options }) => options.body.mode === 'kiosk'));
+  assert.doesNotMatch(JSON.stringify(feed.calls), /adminToken|offerToken|same-origin|org-access/);
+});
+
+test('Kiosk does not render extra claims, raw tokens, keys or proof metadata supplied by APIs', async () => {
+  const data = fixture(2);
+  data.issuers[1].fingerprint = 'PRIVATE_PROOF_SENTINEL';
+  Object.assign(data.attempts[0], {
+    identityVerified: false, name: '<img src=x onerror=alert(1)>',
+    claims: { role: 'UNDISCLOSED_SENTINEL' }, jwt: 'eyJ.FULL_JWT_SENTINEL.signature',
+  });
+  const people = [{
+    name: 'Demo Gast', time: data.attempts[0].time,
+    holderDid: 'did:example:SECRET_HOLDER_SENTINEL',
+    claims: { role: 'UNDISCLOSED_SENTINEL' }, checkins: [data.attempts[0]],
+  }];
+  const app = surface('kiosk', data);
+  app.setApi(kioskFeed(data, people).api);
+  await app.start();
+  await app.ui.attendees();
+  const text = ['progress-list', 'attempts', 'attendees'].map((id) => app.ids.get(id).textContent).join('\n');
+  assert.doesNotMatch(text, /PRIVATE_PROOF_SENTINEL|UNDISCLOSED_SENTINEL|FULL_JWT_SENTINEL|SECRET_HOLDER_SENTINEL/);
+  assert.match(app.ids.get('attempts').textContent, /<img src=x onerror=alert\(1\)> \(ungeprüft\)/);
+  assert.equal(app.ids.get('attempts').querySelectorAll('img').length, 0, 'Untrusted names remain text, never HTML');
+});
+
+test('Kiosk pagehide disposes poll and paging timers permanently, including queued callbacks and BFCache restoration', async () => {
+  const app = surface('kiosk', fixture(18));
+  const feed = kioskFeed(fixture(18));
+  app.setApi(feed.api);
+  await app.ui.poll();
+  assert.equal(app.timers.size, 2);
+  const queued = [...app.timers.values()].map(({ handler }) => handler);
+  const calls = feed.calls.length;
+  await app.emitPage('pagehide');
+  assert.equal(app.timers.size, 0);
+  await app.emitPage('pageshow', { persisted: true });
+  assert.match(app.ids.get('notice').textContent, /Live-Anzeige angehalten.*neu laden/);
+  for (const handler of queued) await handler();
+  await app.ui.poll();
+  await app.advance(60000);
+  assert.equal(feed.calls.length, calls);
+  assert.equal(app.timers.size, 0);
+  assert.equal(app.ui.pagers.issuers.page, 0);
+});
+
+test('Kiosk ignores in-flight configuration, dashboard, attendee and QR creation responses after pagehide', async () => {
+  for (const delayedRoute of ['/config', '/dashboard', '/attendees', '/requests']) {
+    const app = surface('kiosk', fixture(18));
+    const feed = kioskFeed(fixture(18), [{ name: 'Late Guest', time: '2026-11-12T12:00:00Z' }]);
+    if (delayedRoute !== '/config') app.ui.applyConfig(feed.config);
+    let resolve;
+    app.setApi((route, options) => route === delayedRoute
+      ? new Promise((done) => { resolve = () => done(feed.api(route, options)); })
+      : feed.api(route, options));
+    const pending = app.ui.poll();
+    assert.ok(resolve, `${delayedRoute}: request started`);
+    await app.emitPage('pagehide');
+    const before = [...app.ids.values()].map((node) => [node.textContent, node.src, node.href]);
+    resolve();
+    await pending;
+    assert.deepEqual([...app.ids.values()].map((node) => [node.textContent, node.src, node.href]), before,
+      `${delayedRoute}: stopped UI remains untouched`);
+    assert.equal(app.timers.size, 0);
+  }
 });
 
 test('Real central app feeds both dashboards and accepts the host approval and recovery controls', async () => {
-  const dataDirectory = await mkdtemp(join(tmpdir(), 'eudi-dashboard-ui-'));
+  const dataDirectory = await mkdtemp(join(process.cwd(), '.dashboard-ui-'));
   let server;
   try {
     const publicUrl = 'https://workshop.example.org';
@@ -597,19 +888,18 @@ test('Real central app feeds both dashboards and accepts the host approval and r
     kiosk.ui.applyConfig(config);
     await kiosk.start();
     assert.equal(host.ids.get('issuers').children.length, 14);
-    assert.equal(kiosk.ids.get('progress-list').children.length, 14);
+    assert.equal(kiosk.ids.get('progress-list').children.length, 6);
     const organisation = first.data.organisation;
     const view = host.ui.issuerViews.get(organisation.did);
-    const publicView = kiosk.ui.issuerViews.get(organisation.did);
     view.node.open = true;
     await view.approve.emit('click');
     assert.equal(view.status, 'approved');
     await kiosk.refresh();
-    assert.match(publicView.status.textContent, /Freigegeben/);
+    assert.equal(kiosk.ui.pagers.issuers.items.find((item) => item.key === organisation.did).state, 'approved');
     await view.revoke.emit('click');
     assert.equal(view.status, 'suspended');
     await kiosk.refresh();
-    assert.match(publicView.status.textContent, /Gesperrt/);
+    assert.equal(kiosk.ui.pagers.issuers.items.find((item) => item.key === organisation.did).state, 'suspended');
     await view.approve.emit('click');
     await request(`/admin/organisations/${organisation.id}/recovery`, { body: {}, status: 401 });
     await view.recover.emit('click');

@@ -124,9 +124,12 @@ export async function createPresentation({ sdjwt, reveal, holderPrivateJwk, aud,
 }
 
 // Verifier: returns { ok, steps, issuer, holder, vct, claims } and never throws
-export async function verifyPresentation(presentation, { aud, nonce, isTrustedIssuer }) {
+export async function verifyPresentation(presentation, { aud, nonce, isTrustedIssuer, onStep }) {
   const steps = [];
-  const step = (label) => steps.push(label);
+  const step = (label) => {
+    steps.push(label);
+    onStep?.([...steps]);
+  };
   try {
     const { jwt, disclosures, kb } = parseSdJwt(presentation);
     if (!kb) throw new Error('Kein Key-Binding-JWT vorhanden');
