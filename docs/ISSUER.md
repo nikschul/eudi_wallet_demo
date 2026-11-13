@@ -71,7 +71,7 @@ Auch vor einer automatischen Signatur prüft der Server die aktuelle Freigabe.
 3. **„QR-Angebot erstellen“** wählen. Das Angebot ist zehn Minuten gültig.
    Auf dem Laptop erscheinen der Angebots-QR und ein **sechsstelliger Ausgabecode**.
    Der Code steht nur dort, nicht im QR oder Angebotslink.
-4. Auf dem Smartphone das Angebot mit **„QR scannen“ in der Wallet** öffnen.
+4. Auf dem Smartphone das Angebot mit **„QR-Code scannen“ in der Wallet** öffnen.
    Das funktioniert auch direkt in der installierten Wallet (PWA); für die Kamera
    muss die PWA nicht verlassen werden. Alternativ die Smartphone-Kamera nutzen
    oder den Angebotslink auf dem Smartphone öffnen.

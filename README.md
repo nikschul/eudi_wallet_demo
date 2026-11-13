@@ -126,10 +126,14 @@ und Tunnel während der Runde nicht in den Ruhezustand versetzen oder schließen
 
 ## Host starten: vorgebautes Image
 
-**Noch kein Image voraussetzen:** Erst ein erfolgreicher Lauf der neuen
-GHCR-Pipeline veröffentlicht die Images. Bis dahin schlägt `docker compose pull`
-fehl; alternativ ist ein [lokaler Quellcode-Build](#optional-lokaler-quellcode-build)
-möglich. Diese Änderung allein veröffentlicht noch nichts.
+**Voreingestellt ist `ghcr.io/nikschul/eudi_wallet_demo:latest`** – sowohl in
+`compose.yaml` als auch in `.env.example`. Keine Image-ID oder Commit-SHA
+heraussuchen; eine bestehende `.env` sollte denselben `DEMO_IMAGE`-Wert enthalten.
+Ein erfolgreicher `main`-Lauf der [GHCR-Pipeline](#ghcr-erste-veröffentlichung)
+veröffentlicht dieses Tag, startet aber noch keine App auf deinem Rechner.
+Bei `unauthorized` oder `denied` das Package bewusst öffentlich lesbar machen
+oder den Host wie dort beschrieben bei GHCR anmelden. Ist noch kein Image
+veröffentlicht, bleibt der [lokale Quellcode-Build](#optional-lokaler-quellcode-build).
 
 Bei einer früheren Zwei-Server-Installation zuerst die
 [alten App-Container gezielt stoppen](#alte-app-container-gezielt-stoppen),
@@ -150,6 +154,9 @@ wird weder von Compose noch von einem Skript oder CI gestartet.
 In `.env` die ausgegebene **HTTPS-Origin ohne Pfad** als `PUBLIC_URL` eintragen.
 Die Vorlage verwendet nur für eine lokale Vorschau `http://localhost:3000`;
 damit funktioniert die Smartphone-Runde noch nicht.
+Eine bereits eingetragene Tunneladresse nur behalten, wenn genau dieser Tunnel
+noch läuft. `DEMO_IMAGE` ist vorausgefüllt und muss für den normalen Start
+nicht geändert werden.
 
 - `DEMO_IMAGE=ghcr.io/nikschul/eudi_wallet_demo:latest` ist der Standard.
   Für reproduzierbare Runden ein veröffentlichtes Versions-Tag, `sha-<vollständige
@@ -180,6 +187,34 @@ die normalen Browser-Links für Organisation, Wallet und Kiosk verteilen.
 Die Standard-Compose-Datei enthält **keinen Build** und keinen Tunnel-Service.
 Sie zieht das Image aus GHCR. Der Container läuft als `node`, mit
 schreibgeschütztem Root-Dateisystem, beschreibbarem Datenvolume und `/tmp`.
+
+### 3. Workshop im Browser vorbereiten
+
+1. **Nur für dich:** Den privaten Verwaltungslink aus den aktuellen App-Logs
+   in einem nicht projizierten Browserfenster öffnen. Dieser Link schaltet
+   `/admin.html` frei; weder Link noch Token an Teilnehmende geben.
+2. **Am Beamer:** Die öffentliche Workshop-Adresse mit `/kiosk.html` öffnen.
+   Der große QR dient dem Check-in, der kleinere der Organisationseinrichtung.
+3. **Für die Laptops:** Dieselbe öffentliche Adresse mit `/issuer.html`
+   verteilen. Jede Gruppe legt ihre Organisation selbst im eigenen Browser an.
+4. **Für die Smartphones:** Dieselbe Adresse mit `/wallet.html` öffnen.
+   Die Kamera startet über **„QR-Code scannen“** in der Wallet/PWA. Die Wallet
+   kann vorab oder beim ersten Ausweisangebot einmalig eingerichtet werden.
+
+### 4. Vor Beginn eine vollständige Proberunde durchführen
+
+Eine Testorganisation am Laptop anlegen, in deiner Host-Verwaltung prüfen und
+freigeben. Danach einen Mitarbeiterausweis mit Testnamen und Rolle anbieten.
+Auf dem Smartphone den Angebots-QR in der Wallet scannen, den nur am Laptop
+angezeigten Code eingeben und den Ausweis speichern. Anschließend den großen
+Kiosk-QR in derselben Wallet scannen und die Angaben bewusst teilen.
+Der Kiosk muss einen erfolgreichen Check-in zeigen. Erst danach die Runde
+für die Teilnehmenden öffnen; der [detaillierte Ablauf](#ein-eindeutiger-ablauf)
+und die [Moderationsanleitung](docs/KIOSK.md) beschreiben die einzelnen Anzeigen.
+
+Während des Workshops den Rechner wach halten, beide Dienste laufen lassen
+und die öffentliche Adresse nicht wechseln. Teilnehmende benötigen weder
+Docker noch eigene Tunnel, Registry-Logins oder Admin-Token.
 
 ### Betrieb, Updates und Daten
 

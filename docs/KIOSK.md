@@ -11,47 +11,27 @@ einen Laptop-Browser für ihre Organisation und ein Smartphone für ihre Wallet.
 
 Docker und cloudflared wie im [README](../README.md) unter Linux/WSL einrichten. Docker betreibt
 nur die App; der Tunnel läuft separat im Terminal. Falls du vorher den
-Docker-Tunnel verwendet hast, zuerst die
-[einmalige Umstellung](TUNNELS.md#vorhandene-docker-tunnel-entfernen) ausführen.
+alten Zwei-Server-Aufbau verwendet hast, zuerst die
+[alten App-Container gezielt stoppen](../README.md#alte-app-container-gezielt-stoppen),
+ohne ihre Datenvolumes zu löschen.
 
-## 1. Terminal 1: Tunnel einmal starten
+## 1. Zentralen Host vorbereiten
 
-Im Projektordner:
+Einmal den [Host-Start im README](../README.md#host-starten-vorgebautes-image)
+durchführen. Dort stehen die einzigen Tunnel-Startbefehle und die vollständige
+Checkliste bis zur Proberunde. Einen bereits laufenden Tunnel weiterverwenden.
 
-```bash
-cloudflared tunnel --url http://localhost:3000
-```
-
-Die ausgegebene HTTPS-Adresse kopieren und dieses Terminal während der ganzen
-Runde offen lassen. Die App muss jetzt noch nicht laufen; bis Schritt 2 kann
-die öffentliche Adresse einen Verbindungsfehler zeigen.
-**Denselben Tunnel weiterlaufen lassen, keinen zweiten starten.**
-
-## 2. Terminal 2: Adresse eintragen und App einmal starten
-
-In der vorhandenen `.env.workshop` diese Werte setzen; die HTTPS-Adresse aus
-Terminal 1 einsetzen:
-
-```dotenv
-APP_ROLE=workshop
-PORT=3000
-PUBLIC_URL=https://DEINE-ZENTRALE.trycloudflare.com
-```
-
-Optional Veranstaltungstitel und Empfangsname ändern. Dann in einem zweiten
-Terminal derselben Linux-/WSL-Umgebung im Projektordner:
-
-```bash
-docker compose -p eudi-workshop --env-file .env.workshop -f compose.yaml up -d --build --wait app
-curl --fail http://localhost:3000/api/health
-```
-
-Erwartet: `{"ok":true,"role":"workshop"}`. Der Container nutzt Port 3000;
-der Host-Port ist nur an `127.0.0.1` gebunden. `--wait` wartet auf den Healthcheck.
-Der Docker-Start startet **keinen** Tunnel.
+Das Image **`ghcr.io/nikschul/eudi_wallet_demo:latest`** ist vorausgefüllt.
+Verwendet werden ausschließlich `.env` und `compose.yaml`; das Compose-Projekt
+heißt `eudi-hosted`. Keine `.env.workshop`, kein `APP_ROLE` und kein `--build`
+für den normalen Start verwenden. In `.env` nur die aktuelle öffentliche
+HTTPS-Origin als `PUBLIC_URL` eintragen und bei Bedarf Titel oder Host-Port
+anpassen. Ein privates GHCR-Package benötigt einen berechtigten Docker-Login
+des Hosts; Teilnehmende brauchen keinen Registry-Zugang.
 
 Die öffentliche Adresse im Browser prüfen: `/api/health` muss dieselbe Antwort
-liefern; unter `/api/config` muss `publicUrl` mit der Tunnel-Adresse übereinstimmen.
+`{"ok":true,"role":"workshop"}` wie der lokale Health-Endpunkt liefern; unter
+`/api/config` muss `publicUrl` mit der Tunnel-Adresse übereinstimmen.
 Die öffentliche Adresse mit `/issuer.html` an Teilnehmende zur
 [Organisationseinrichtung am Laptop](ISSUER.md) verteilen. Alle Organisationen
 nutzen denselben Origin, haben aber einen eigenen persistenten Signaturschlüssel
@@ -64,7 +44,7 @@ Teilnehmenden-Issuer-Installation. Es gibt keine Datenmigration aus diesen alten
 Installationen. Keine zusätzlichen Issuer-Container oder Teilnehmenden-Tunnel
 starten; Organisationen neu auf der Zentrale registrieren.
 
-## 3. Gemeinsam moderieren
+## 2. Gemeinsam moderieren
 
 - <http://localhost:3000/kiosk.html> auf TV/Beamer öffnen.
   Der große **Check-in-QR** bleibt der primäre QR. Darunter zeigt der Kiosk einen
@@ -90,7 +70,7 @@ starten; Organisationen neu auf der Zentrale registrieren.
 - Den privaten lokalen Freischalt-Link aus dem **neuesten Startblock** öffnen:
 
   ```bash
-  docker compose -p eudi-workshop --env-file .env.workshop -f compose.yaml logs --tail 20 app
+  docker compose --env-file .env -f compose.yaml logs --tail=80 app
   ```
 
   Der Link öffnet die Verwaltung automatisch. Alternativ unter
@@ -124,7 +104,7 @@ starten; Organisationen neu auf der Zentrale registrieren.
   gescannt werden. Jeder Scan erzeugt eine eigene einmalige Check-in-Anfrage;
   die persönlichen Versuche blockieren sich nicht.
 
-## 4. Organisationszugang bei Bedarf wiederherstellen
+## 3. Organisationszugang bei Bedarf wiederherstellen
 
 Wenn der bisherige Organisationsbrowser nicht mehr verfügbar ist, als Host zuerst
 die Berechtigung außerhalb der App prüfen. In der aufgeklappten Organisation
@@ -167,7 +147,7 @@ keine historischen erfolgreichen Check-in-Protokolle.
 ## Beenden
 
 ```bash
-docker compose -p eudi-workshop --env-file .env.workshop -f compose.yaml down
+docker compose --env-file .env -f compose.yaml down
 ```
 
 Tunnel mit Strg+C beenden; Serverdaten bleiben im Volume. `down -v` würde sie
