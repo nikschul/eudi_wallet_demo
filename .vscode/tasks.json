@@ -13,26 +13,6 @@
 			"group": "build"
 		},
 		{
-			"label": "Start workshop with HTTPS",
-			"type": "shell",
-			"command": "bash",
-			"args": [
-				"${workspaceFolder}/scripts/demo.sh",
-				"workshop"
-			],
-			"problemMatcher": []
-		},
-		{
-			"label": "Start issuer with HTTPS",
-			"type": "shell",
-			"command": "bash",
-			"args": [
-				"${workspaceFolder}/scripts/demo.sh",
-				"issuer"
-			],
-			"problemMatcher": []
-		},
-		{
 			"label": "Start demo",
 			"type": "shell",
 			"command": "npm",

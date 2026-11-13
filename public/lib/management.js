@@ -32,7 +32,7 @@ export function managementAccess({ prefix, content, onUnlock, onLock = () => {} 
       placeholder: 'Admin-Token aus den Server-Logs',
     });
     panel.replaceChildren(el('h2', {}, 'Verwaltung freischalten'),
-      el('p', {}, 'Öffne den privaten Freischalt-Link aus den Server-Logs. Alternativ kannst du hier den automatisch erzeugten Admin-Token eingeben. Wallet und Check-in benötigen keinen Admin-Token.'),
+      el('p', {}, 'Dieser Zugang ist nur für den Host. Öffne den privaten Freischalt-Link aus den Server-Logs oder gib den dort erzeugten Admin-Token ein. Organisationseinrichtung, Wallet und Check-in benötigen keinen Admin-Token.'),
       formAction(el('form', { class: 'stack' },
         el('label', { class: 'field' }, 'Admin-Token', input),
         el('button', { type: 'submit' }, 'Verwaltung freischalten')),

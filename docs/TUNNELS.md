@@ -1,136 +1,117 @@
-# Automatischer lokaler Start mit HTTPS
+# Ein zentraler HTTPS-Tunnel im Terminal
 
-[Projekt](../README.md) · [Issuer-Setup](ISSUER.md) · [Kiosk-Setup](KIOSK.md)
+[Projekt und Host-Start](../README.md#host-starten-vorgebautes-image)
 
-Dieser Weg betreibt Zentrale und Issuer auf den jeweiligen Linux-Rechnern.
-Cloudflared läuft als zusätzlicher Docker-Container. Keine lokale Installation
-von Node.js, npm oder cloudflared und kein Cloudflare-Konto erforderlich.
-GitHub Pages, Codespaces und ein VPS sind für diesen Weg nicht nötig.
+**Ein Host, eine App, eine öffentliche Origin für alle Organisationen.**
+Docker betreibt ausschließlich die Anwendung. cloudflared läuft separat als
+nativer Vordergrundprozess im Terminal, nicht als Container, Compose-Service
+oder automatisierter Launcher. Teilnehmende brauchen nur Browser, keine
+eigenen Tunnel, Images, Konfigurationen oder Host-Admin-Token.
 
-Voraussetzungen: Bash, curl und Docker mit aktuellem Compose sowie Zugriff
-auf den laufenden Docker-Daemon. Die Rechner brauchen Internet; Firewalls
-können Cloudflare-Tunnel blockieren. Nur erfundene Daten verwenden.
+## Einmaliger Ablauf auf dem Host
 
-## 1. Moderation startet die Zentrale
+Die vollständigen Startbefehle stehen nur im
+[Host-Start des README](../README.md#host-starten-vorgebautes-image);
+hier keinen zweiten Tunnel starten.
 
-Im Projektordner:
+1. **Vorbereiten:** Docker mit aktuellem Compose, curl und
+   [cloudflared nativ installieren](../README.md#cloudflared-installieren).
+   Für ein vorgebautes Image muss die
+   [erste GHCR-Veröffentlichung](../README.md#ghcr-erste-veröffentlichung)
+   erfolgreich abgeschlossen sein. Node.js und npm auf dem Host sind unnötig.
+2. **Terminal 1:** Genau einen Tunnel auf `http://localhost:3000` starten und
+   offen lassen. Quick Tunnels benötigen kein Cloudflare-Konto.
+3. **Konfiguration:** Die ausgegebene HTTPS-Origin als `PUBLIC_URL` in `.env`
+   eintragen. Kein `APP_ROLE`, kein `WORKSHOP_URL` und keine
+   organisationsspezifischen Servereinstellungen.
+4. **Terminal 2:** Das vorgebaute Image ziehen, die zentrale App starten und
+   lokalen sowie öffentlichen Health-Endpunkt prüfen.
+5. **Verteilen:** Nur die öffentlichen Links unter derselben Origin teilen:
+   `/issuer.html` für den Organisationsassistenten, `/wallet.html` für die
+   Smartphone-Wallet und `/kiosk.html` für den Empfang. `/admin.html` und
+   dessen Freischalt-Link mit dem automatisch erzeugten Token bleiben privat.
 
-```bash
-bash scripts/demo.sh workshop
-```
+Der Tunnel kann seine Adresse bereits vergeben, bevor die App läuft.
+Compose startet keinen weiteren Tunnel. Der Host-Port ist standardmäßig
+**127.0.0.1:3000**, der Container-Port immer **3000**. Bei einem abweichenden
+Host-Port `PORT` in `.env`, Tunnelziel und lokale Prüf-URL gemeinsam anpassen.
+cloudflared muss in derselben Linux-/WSL-Umgebung laufen, in der der Docker-Port
+über `localhost` erreichbar ist. Rechner und WSL-Sitzung während der Runde
+nicht schlafen legen. Nur erfundene Daten verwenden.
 
-Das Skript baut das Image einschließlich Prüfungen, startet den Tunnel,
-ermittelt dessen HTTPS-Adresse und startet die Zentrale mit passender
-`PUBLIC_URL`. Erst nach erfolgreichem Container- und öffentlichem HTTPS-Check
-erscheint **„Bereit: workshop“**.
+## Bestehende Installationen und Daten
 
-Die Ausgabe enthält:
+Das zentrale Mandantenmodell ersetzt die frühere Trennung in Workshop- und
+Issuer-Server vollständig, **ohne Datenmigration**. Das neue Compose-Projekt
+`eudi-hosted` verwendet ausschließlich das neue Volume `hosted-data`
+(standardmäßig `eudi-hosted_hosted-data`). Alte Workshop-/Issuer-Volumes und
+lokale Daten bleiben unangetastet und sind nicht kompatibel: nicht kopieren
+oder in den neuen Container mounten. Organisationen und Ausweise neu anlegen.
+Im Container setzt Compose `DATA_DIR=/app/data` für `hosted-schema.json` und
+`hosted-state.json`. Alte `identity.json`, `credentials.json`, `issuers.json`
+oder `attendees.json` in diesem Verzeichnis verhindern den Start ausdrücklich;
+es gibt keine automatische Migration oder Löschung.
 
-- die öffentliche Zentralen-Adresse für die Teilnehmenden;
-- den Kiosk-Link für den großen Bildschirm;
-- einen ausdrücklich **privaten Verwaltungslink** für die Moderation.
+`compose.issuer.yaml` ist entfallen; vorhandene `.env.issuer` und `.env.workshop`
+werden nicht mehr für das Deployment gelesen und können unverändert liegen
+bleiben. Alte automatisch gespeicherte Tunneladressen werden ignoriert.
+Falls eine alte Instanz den Port belegt, diese bewusst separat verwalten oder
+einen anderen Host-Port wählen. Die
+[gezielte Stop-Anleitung im README](../README.md#alte-app-container-gezielt-stoppen)
+findet alte `eudi-workshop`-/`eudi-issuer`-App-Container über ihre Compose-Labels,
+auch ohne die entfernten Compose-Dateien. Nach Prüfung nur diese Container
+stoppen; ihre Volumes bleiben erhalten. Keine fremden Prozesse stoppen,
+keine alten Volumes entfernen und kein `down -v` oder Volume-Prune ausführen.
 
-Nur die Zentralen-Adresse weitergeben, **nicht** den Verwaltungslink oder
-Admin-Token. Die Wallet wird weiterhin unter dieser gemeinsamen
-Zentralen-Adresse auf dem Smartphone eingerichtet.
+## Beenden, Neustarts und neue Adressen
 
-## 2. Teilnehmende starten ihren Issuer
-
-Jede Person startet auf ihrem eigenen Rechner:
-
-```bash
-bash scripts/demo.sh issuer --workshop-url https://ADRESSE-DER-ZENTRALE
-```
-
-Die Adresse aus Schritt 1 einsetzen, ohne einen zusätzlichen Seitenpfad.
-Das Skript prüft zuerst, ob dort eine echte Workshop-Zentrale antwortet.
-Die Issuer-Adresse wird anschließend automatisch ermittelt und eingesetzt.
-Der eigene private Verwaltungslink erscheint in der lokalen Terminal-Ausgabe.
-
-Danach bleiben nur die fachlichen Schritte im Browser:
-
-1. Eigenen Namen und Issuer-Identität einrichten.
-2. Issuer bei der Zentrale registrieren.
-3. Die Moderation vergleicht den Fingerabdruck und setzt das Issuer-Vertrauen.
-4. Ausweis vorbereiten, mit dem Handy verbinden und bewusst signieren.
-
-Hosting automatisiert keine Vertrauensentscheidung. Jeder Issuer hat weiterhin
-seinen eigenen Schlüssel und sein eigenes Datenvolume.
-
-Die Zentralen-Adresse wird lokal gemerkt. Beim nächsten Start reicht:
-
-```bash
-bash scripts/demo.sh issuer
-```
-
-Beim ersten Start ohne gespeicherte Adresse fragt das Skript im Terminal danach.
-In nicht interaktiven Aufrufen muss `--workshop-url` oder die Umgebungsvariable
-`WORKSHOP_URL` gesetzt sein. Eine neue Zentralen-Adresse lässt sich mit
-`--workshop-url` ausdrücklich übernehmen.
-
-Alternativ gibt es in VS Code die Tasks **„Start workshop with HTTPS“** und
-**„Start issuer with HTTPS“**.
-
-## Status und Beenden
-
-```bash
-bash scripts/demo.sh workshop status
-bash scripts/demo.sh issuer status
-
-bash scripts/demo.sh issuer stop
-bash scripts/demo.sh workshop stop
-```
-
-`status` prüft nicht nur den Container, sondern auch den öffentlichen
-HTTPS-Endpunkt und die richtige Rolle. `stop` beendet ausschließlich App und
-Tunnel der gewählten Rolle. Die Datenvolumes bleiben erhalten.
-
-Das Startskript darf nach seiner Erfolgsmeldung geschlossen werden: Die
-Container laufen in Docker weiter. Rechner und Docker während der Runde nicht
-in den Ruhezustand versetzen. Die Quick-Tunnel-Container starten absichtlich
-nicht automatisch neu; nach Rechner-/Tunnel-Neustart den Startbefehl erneut
-ausführen, damit die Server-Adresse zur neu vergebenen URL passt.
-
-## Konfiguration und Grenzen
-
-- Die bestehenden Dateien `.env.workshop` und `.env.issuer` werden **nicht
-  überschrieben**. Ihre Ports und sonstigen Einstellungen gelten weiterhin.
-- Die automatisch vergebenen Adressen liegen in `.demo/workshop.env` bzw.
-  `.demo/issuer.env`. Diese Dateien sind aus Git und dem Docker-Build-Kontext
-  ausgeschlossen und enthalten keine Verwaltungs-Token oder privaten Schlüssel.
-- Das Skript verwendet dieselben Compose-Projektnamen und Volumes wie die
-  bisherigen Anleitungen: `eudi-workshop` und `eudi-issuer`. Deshalb nicht
-  parallel einen zweiten manuellen Start derselben Rolle vornehmen.
-- Bei einem fehlgeschlagenen Start wird ein **neu gestarteter** Tunnel wieder
-  beendet. Ein bereits vorher laufender Tunnel wird nicht ungefragt gestoppt.
-  Die Anwendung kann für die lokale Fehlersuche weiterhin vorhanden sein.
-- Ein erneuter Start verwendet einen noch laufenden Tunnel weiter. Nach dessen
-  Beenden kann Cloudflare jedoch eine andere Adresse vergeben.
+Den Tunnel mit **Strg+C** in seinem Terminal beenden; die zentrale App separat
+mit dem Compose-Befehl aus dem README stoppen. Ein Docker-Neustart startet
+keinen Tunnel. Ein noch laufender Tunnel braucht wegen eines App-Neustarts
+oder Image-Updates **keinen Neustart**.
 
 **Quick Tunnels sind temporäre Workshop-Adressen, keine stabile Produktion.**
-Eine neue Zentralen-Domain hat einen anderen Browser-Speicher: Bestehende
-Wallet-Schlüssel bleiben unter der alten Adresse. Eine neue Issuer-Domain
-erfordert erneute Registrierung und neue Ausweise mit passender signierter
-Statuslisten-URL. Die Datenvolumes zu behalten macht URLs nicht stabil.
-Für wiederkehrende Veranstaltungen sollten später feste Named-Tunnel-Hostnamen
-oder ein VPS mit stabilen Domains verwendet werden.
+Nach einem neuen Tunnelstart kann sich die Adresse ändern. Dann `PUBLIC_URL`
+aktualisieren und die App mit dem dokumentierten Compose-Start neu erstellen.
+Es ist keine zweite Issuer-Adresse zu konfigurieren.
 
-Die manuelle Installation und die bisherigen Compose-Befehle bleiben als
-Alternative dokumentiert. Bei automatischem Start immer dieses Skript auch
-zum Wiederanlauf verwenden, statt mit den alten `PUBLIC_URL`-Werten manuell
-neu zu starten.
+Der Neustart erhält Organisationsschlüssel, Freigaben, Zugangszuordnungen,
+Ausstellungsdaten, Historie und Widerrufe im bestehenden Volume; kein Reset
+und keine Migration nötig. Angebote der alten Origin laufen ab
+(`410 Gone`); neue Angebote und Ausweise verwenden die neue Adresse.
+
+Eine neue Origin hat anderen Browser-Speicher und andere Cookies:
+Wallet-Schlüssel bleiben unter der alten Adresse; Organisationszugänge im
+Notebook-Browser gelten nicht automatisch unter der neuen. Verlorenen
+Organisationszugang kann nur die Moderation wiederherstellen.
+Ausweise mit signierter Statuslisten-URL der alten Origin neu ausstellen.
+Das Datenvolume zu behalten macht URLs nicht stabil und verschiebt keine
+privaten Wallet-Schlüssel. Für wiederkehrende Veranstaltungen einen stabilen
+Named-Tunnel-Hostnamen oder einen Host mit fester HTTPS-Origin verwenden;
+auch ein Named Tunnel bleibt ein separat verwalteter nativer Prozess.
 
 ## Fehlersuche
 
+- **cloudflared fehlt:** Die native Installation im README durchführen; ohne
+  Administratorrechte sind die offiziellen Release-Binaries eine Alternative.
+- **Image nicht gefunden / Zugriff verweigert:** Erst erfolgreichen
+  GHCR-Publish abwarten, `DEMO_IMAGE` und Tag prüfen. Ein privates Package
+  benötigt einen berechtigten Host-Login oder explizit öffentliche Sichtbarkeit.
+  Teilnehmende brauchen keine Registry-Zugangsdaten.
 - **Docker nicht erreichbar:** Docker-Dienst und Benutzerrechte prüfen. Den
   Docker-Socket nicht für alle beschreibbar machen.
-- **Zentrale nicht erreichbar:** Die Moderation muss zuerst Schritt 1 erfolgreich
-  abschließen. Nur deren aktuelle HTTPS-Adresse verwenden.
-- **Keine Tunnel-Adresse / HTTPS-Prüfung schlägt fehl:** Internet, Firewall und
-  Cloudflare-Erreichbarkeit prüfen. Mit `--timeout 300` kann die Wartezeit je
-  Phase erhöht werden; der Standard ist 120 Sekunden.
-- **Port schon belegt:** `PORT` in der jeweiligen lokalen Env-Datei ändern und
-  den Start wiederholen. Keine fremden Prozesse beenden.
-- **Aktuellen Verwaltungslink erneut lesen:** Den Startbefehl wiederholen.
-  Ein Serverneustart erzeugt einen neuen Token; alte Links funktionieren dann
-  nicht mehr.
+- **Öffentliche Adresse nicht erreichbar:** Terminal-Tunnel und Docker-App
+  müssen beide laufen. Tunnelziel, lokale Erreichbarkeit, Internet, Firewall
+  und Cloudflare-Erreichbarkeit prüfen.
+- **Port schon belegt:** `PORT`, Tunnelziel und lokale Prüf-URL anpassen.
+  Keine anderen Prozesse ungefragt beenden.
+- **Alte Adresse oder falsches Image:** In der Shell exportierte `PUBLIC_URL`,
+  `PORT` oder `DEMO_IMAGE` haben Vorrang vor `.env`. Alte Demo-Variablen im
+  App-Terminal bewusst entfernen, Konfiguration prüfen und App neu erstellen.
+  Die alte `.env.issuer` wird nicht gelesen.
+- **Organisationszugang fehlt:** Dieselbe HTTPS-Origin und denselben normalen
+  Notebook-Browser verwenden; Cookies nicht löschen. Bei verlorenem Zugang
+  die Moderation um Wiederherstellung bitten, nicht nach einem Admin-Token fragen.
+- **Host-Verwaltungslink fehlt / veraltet:** Die aktuellen App-Logs wie im
+  README lesen. Jeder Serverneustart erzeugt einen neuen Host-Token; dafür
+  den Tunnel nicht neu starten. Logs und privaten Link nicht öffentlich teilen.

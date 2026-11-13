@@ -77,6 +77,9 @@ nav a[aria-current] { color: var(--accent-dark); font-weight: 650; }
 .issuer-status { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; overflow-wrap: anywhere; }
 .issuer-registration > summary .issuer-status { flex: 0 1 44%; flex-direction: column; align-items: start; }
 .issuer-registration .issuer-approval { padding: 12px 4px 22px; border: 0; }
+.organisation-recovery { margin-top: 16px; border-top: 1px solid var(--line); }
+.organisation-recovery-result { margin-top: 16px; padding: 16px; border: 1px solid #e6c27a; border-radius: 12px; }
+.organisation-recovery-result input { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
 .lead { font-size: clamp(2.4rem, 6vw, 3.8rem); line-height: 1.1; letter-spacing: -.045em; margin-bottom: 24px; }
 .lead strong { color: var(--accent-dark); }
 .eyebrow { font-size: .78rem; font-weight: 700; text-transform: uppercase; letter-spacing: .12em; color: var(--accent-dark); }
@@ -165,6 +168,11 @@ td input[type="checkbox"] { width: 32px; height: 32px; margin: 6px; }
 .onboarding-qr img { border-radius: 10px; flex-shrink: 0; }
 .onboarding-qr p { margin: 4px 0; }
 .onboarding-qr span { font-size: .8rem; overflow-wrap: anywhere; }
+.organisation-setup { max-width: 720px; padding-top: 12px; border-top: 1px solid var(--line); font-size: .85rem; }
+.organisation-setup > div { min-width: 0; }
+.organisation-setup img { width: 112px; height: 112px; background: #fff; }
+.organisation-setup-link { display: block; overflow-wrap: anywhere; user-select: all; }
+.organisation-setup button { margin-block: 6px; min-height: 44px; padding: 8px 12px; }
 .kiosk-sidebar { background: #e9f0eb; padding: 24px; display: flex; flex-direction: column; gap: 16px; min-height: 0; min-width: 0; }
 .kiosk-sidebar > .card { padding: 18px 22px; }
 .progress-panel, .activity-panel { display: flex; flex-direction: column; min-height: 180px; overflow: hidden; }
@@ -220,6 +228,8 @@ td input[type="checkbox"] { width: 32px; height: 32px; margin: 6px; }
 @media (min-width: 1200px) and (min-height: 950px) {
   .kiosk-body { height: 100dvh; overflow: hidden; }
   .kiosk-layout { height: calc(100dvh - 88px); min-height: 0; }
+  .kiosk-main { overflow-y: auto; }
+  .qr-frame img { width: clamp(320px, calc(100dvh - 640px), 520px); }
 }
 @media (max-width: 1199px), (max-height: 949px) {
   .kiosk-layout { grid-template-columns: 1fr; }

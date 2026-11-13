@@ -1,5 +1,13 @@
 # Spec: EUDI-Wallet-Simulation mit Check-in (Teil 2)
 
+> **Historischer Entwurf, nicht die aktuelle Betriebsanleitung.** Das heutige
+> Setup hostet alle Organisationen zentral mit getrennten Schlüsseln,
+> Host-Bestätigung und Browserzugang. Die Wallet scannt QR-Codes in der PWA;
+> nach richtigem Ausgabecode wird automatisch im Namen der Organisation signiert.
+> Die frühere Browser-Issuer-Architektur und API unten sind nicht mehr maßgeblich.
+> Aktuell: [Hosting und Einstieg](README.md), [Organisation einrichten](docs/ISSUER.md),
+> [Wallet und Check-in](docs/PARTICIPANTS.md).
+
 Nov 12, 2026 · @Niklas · Übergabe an Coding Agent
 
 ## Ziel und Rahmen

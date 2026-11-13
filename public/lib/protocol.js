@@ -1,8 +1,8 @@
 import * as sd from './sdjwt.js';
 
 export const EMPLOYEE_VCT = 'urn:workshop:mitarbeiterausweis:1';
-export const REGISTRATION_PROOF = 'workshop-issuer-registration+jwt';
 export const HOLDER_PROOF = 'workshop-holder-proof+jwt';
+export const ROLES = Object.freeze(['Mitarbeitende', 'Teamleitung', 'Gast']);
 
 export function publicOrigin(value, label = 'Adresse') {
   let url;

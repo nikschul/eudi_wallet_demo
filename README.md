@@ -1,44 +1,68 @@
 # EUDI Wallet Workshop
 
 Eine deutschsprachige Lernsimulation für digitale Mitarbeiterausweise:
-Am Notebook einen Ausweis vorbereiten, mit der Smartphone-Wallet verbinden,
-bewusst signieren und am gemeinsamen Empfang einchecken. Der Workshop zeigt
+Am Notebook einen Ausweis vorbereiten, mit der Smartphone-Wallet verbinden
+und am gemeinsamen Empfang einchecken. Der Workshop zeigt
 den Unterschied zwischen **gültiger Signatur** und **Vertrauen in den Aussteller**.
 Zusätzlich wird der **Widerrufsstatus des einzelnen Ausweises** geprüft.
 
 ## Ablauf und Architektur
 
-- **Workshop-Zentrale:** Die Moderation betreibt Wallet-Webapp, Kiosk-Dashboard
-  und geschützte Verwaltung auf ihrem Rechner (`APP_ROLE=workshop`, Host-Port 3000).
-- **Persönlicher Issuer:** Jede Person betreibt ihre eigene Ausweisstelle
-  auf einem Notebook (`APP_ROLE=issuer`, Host-Port 3001).
-- **Smartphone:** Die Wallet bleibt unter der festen zentralen HTTPS-Adresse.
-  Sie verbindet sich per Angebots-QR mit dem persönlichen Issuer. Dessen Server
-  signiert erst nach Eingabe des Ausgabecodes in der Wallet und bewusster
-  Bestätigung am Notebook.
-- **Kiosk:** Issuer-Registrierung, Issuer-Vertrauen und persönliche Check-in-Versuche werden
+- **Ein zentraler Host:** Die Moderation betreibt genau eine App mit einer
+  öffentlichen HTTPS-Origin für alle Organisationen, Wallets und den Empfang.
+- **Organisationen als Mandanten:** Jede Organisation hat eine isolierte
+  Identität, eigene serverseitige Schlüssel und eigene Ausweise innerhalb
+  derselben App. Die Moderation gibt die Organisation frei.
+- **Teilnehmende brauchen nur Browser:** Am Notebook den Organisationsassistenten
+  unter `/issuer.html` öffnen; die Smartphone-Wallet liegt unter `/wallet.html`.
+  Keine eigenen Images, Konfigurationen, Tunnel oder Admin-Token verteilen.
+- **Ausstellung:** Angebots-QR scannen und den nur am Notebook angezeigten
+  sechsstelligen Code in der Wallet eingeben. Bei korrektem Code und
+  Wallet-Besitznachweis signiert der Server automatisch; kein manueller
+  Signaturknopf am Notebook.
+- **Kiosk:** Organisationsregistrierung, Vertrauen und persönliche Check-in-Versuche werden
   live sichtbar. Mehrere Personen können denselben Empfangs-QR scannen:
   Jede erhält eine eigene, einmalige Anfrage.
 
-Beide Rollen verwenden dasselbe Docker-Image, aber **unabhängige Compose-Dateien,
-Projektnamen, Ports und Datenvolumes**. Sie lassen sich auch auf einem Rechner
-testen; Compose-Dateien nicht zusammenführen. Private Wallet-Schlüssel bleiben
-im Smartphone-Browser, Issuer-Schlüssel in dessen Server-Volume.
+Private Wallet-Schlüssel bleiben im Smartphone-Browser. Organisationsschlüssel
+bleiben ausschließlich im zentralen Server-Volume. Der Organisationszugang
+bleibt als Cookie im Notebook-Browser erhalten. Bei Verlust kann **nur die
+Moderation** den Zugang wiederherstellen.
+
+Ausweise sind fest an die ausstellende Organisation gebunden und enthalten
+keinen Namen der bedienenden Person. Die Rollen heißen **Mitarbeitende**,
+**Teamleitung** und **Gast**.
+
+| Zugang unter derselben öffentlichen Origin | Zweck |
+|---|---|
+| `/issuer.html` | Öffentlicher Organisationsassistent; eigener Mandantenzugang per Cookie |
+| `/wallet.html` | Smartphone-Wallet |
+| `/kiosk.html` | Öffentliches Empfangs-Dashboard |
+| `/admin.html` | Private Verwaltung der Moderation; Admin-Token erforderlich |
 
 ## Voraussetzungen und Installation
 
-Du brauchst Internet, Bash, curl und Docker mit Compose v2 samt `--wait`.
-Beim [automatischen Start](docs/TUNNELS.md) läuft cloudflared im Container;
-die lokale Installation unten ist nur für den manuellen Alternativweg nötig.
+Nur der **Host** braucht Internet, curl, Docker mit Compose v2 samt `--wait` und
+eine lokale cloudflared-Installation. **Docker betreibt nur die App.
+Genau ein Tunnel läuft separat als nativer Vordergrundprozess im Terminal.**
 Auf dem Host sind weder Node.js noch npm nötig. Alle folgenden Shellbefehle
-laufen in **Bash unter Linux oder WSL2**, im heruntergeladenen Projektordner.
+laufen unter **Linux oder WSL2**. Das App-Image benötigt kein Bash.
 
-Projekt herunterladen und in den Ordner wechseln:
+Nach der [ersten Image-Veröffentlichung](#ghcr-erste-veröffentlichung) braucht
+der Host nur die Compose-Datei und die Konfigurationsvorlage, nicht den
+Quellcode oder einen npm-Build:
 
 ```bash
-git clone https://github.com/nikschul/eudi_wallet_demo
-cd eudi_demo
+mkdir -p eudi-hosted
+cd eudi-hosted
+curl -fLO https://raw.githubusercontent.com/nikschul/eudi_wallet_demo/main/compose.yaml
+curl -fLO https://raw.githubusercontent.com/nikschul/eudi_wallet_demo/main/.env.example
+test -e .env || cp .env.example .env
 ```
+
+Eine vorhandene `.env` nicht überschreiben, sondern bewusst prüfen.
+Bei einem Fork die Download-URLs und `DEMO_IMAGE` an das tatsächliche Repository
+anpassen. Teilnehmende laden keine dieser Dateien herunter.
 
 - **Windows:** [WSL2 installieren](https://learn.microsoft.com/windows/wsl/install)
   (`wsl --install` in einer administrativen PowerShell), dann
@@ -58,8 +82,8 @@ machen. Den lokalen Docker-Kontext verwenden.
 
 ### cloudflared installieren
 
-Dieser Abschnitt ist optional, wenn du den [automatischen Docker-Start](docs/TUNNELS.md)
-verwendest.
+cloudflared nur auf dem zentralen Host installieren. Es ist nicht im
+Docker-Image enthalten; Teilnehmende brauchen es nicht.
 
 **Arch Linux:** Das Paket liegt im offiziellen Extra-Repository; kein AUR
 und kein manueller Binary-Download nötig:
@@ -100,104 +124,228 @@ cloudflared läuft als Linux-Prozess in derselben Linux-/WSL-Umgebung, in der
 der Docker-Host-Port über `localhost` erreichbar ist. Notebook, WSL-Sitzung
 und Tunnel während der Runde nicht in den Ruhezustand versetzen oder schließen.
 
-## Jetzt loslegen
+## Host starten: vorgebautes Image
 
-**Einfachster lokaler Weg – inklusive automatischem HTTPS-Tunnel:**
+**Noch kein Image voraussetzen:** Erst ein erfolgreicher Lauf der neuen
+GHCR-Pipeline veröffentlicht die Images. Bis dahin schlägt `docker compose pull`
+fehl; alternativ ist ein [lokaler Quellcode-Build](#optional-lokaler-quellcode-build)
+möglich. Diese Änderung allein veröffentlicht noch nichts.
+
+Bei einer früheren Zwei-Server-Installation zuerst die
+[alten App-Container gezielt stoppen](#alte-app-container-gezielt-stoppen),
+damit insbesondere Host-Port 3000 frei ist. Dabei bleiben deren Volumes erhalten.
+
+### 1. Terminal 1: genau einen nativen Tunnel starten
 
 ```bash
-# Zuerst auf dem Rechner der Moderation:
-bash scripts/demo.sh workshop
-
-# Dann je Teilnehmer-Rechner, mit der ausgegebenen Zentralen-Adresse:
-bash scripts/demo.sh issuer --workshop-url https://ADRESSE-DER-ZENTRALE
+cloudflared tunnel --url http://localhost:3000
 ```
 
-Keine Tunnel-URLs von Hand in Env-Dateien kopieren. Details zu Status,
-Beenden und temporären Adressen: [Automatischer Start](docs/TUNNELS.md).
+Dieses Terminal offen lassen. cloudflared kann bereits eine
+`https://….trycloudflare.com`-Adresse ausgeben, bevor die App läuft. Der Tunnel
+wird weder von Compose noch von einem Skript oder CI gestartet.
 
-Für den manuellen Alternativweg:
-Die mitgelieferten `.env.workshop` und `.env.issuer` enthalten nur Dummy-Werte,
-keine Geheimnisse. Die jeweils eigenen Tunnel-Adressen darin ersetzen.
+### 2. Terminal 2: Host konfigurieren und App starten
 
-- **[Kiosk / Workshop-Zentrale](docs/KIOSK.md)** – Moderation startet die Zentrale.
-- **[Eigener Issuer](docs/ISSUER.md)** – Ausweisstelle starten und registrieren.
-- **[Hands-on für Teilnehmende](docs/PARTICIPANTS.md)** – Notebook → Handy → Kiosk.
+In `.env` die ausgegebene **HTTPS-Origin ohne Pfad** als `PUBLIC_URL` eintragen.
+Die Vorlage verwendet nur für eine lokale Vorschau `http://localhost:3000`;
+damit funktioniert die Smartphone-Runde noch nicht.
 
-## Hosting und Automatisierung: Konzept
+- `DEMO_IMAGE=ghcr.io/nikschul/eudi_wallet_demo:latest` ist der Standard.
+  Für reproduzierbare Runden ein veröffentlichtes Versions-Tag, `sha-<vollständige
+  Commit-SHA>` oder `ghcr.io/nikschul/eudi_wallet_demo@sha256:<Digest>` verwenden.
+- `PORT=3000` ist ausschließlich der Host-Port, gebunden an **127.0.0.1**.
+  Im Container bleibt der Port **3000**. Bei einem anderen Host-Port auch das
+  Ziel des einen Terminal-Tunnels anpassen.
+- Optional `VERIFIER_NAME` und `EVENT_TITLE` setzen. Keine Admin-Token,
+  Organisationsschlüssel, `APP_ROLE` oder `WORKSHOP_URL` konfigurieren.
 
-**Variante C, der lokale Compose-Tunnel-Start, ist umgesetzt:** siehe
-[Automatischer Start](docs/TUNNELS.md). Die übrigen Varianten bleiben eine
-Zielarchitektur; Deployment-Workflows oder Codespaces-Konfigurationen sind
-noch nicht enthalten.
+Dann im Verzeichnis der Compose-Datei:
 
-**GitHub Actions deployt, GitHub Pages hostet nur statische Dateien.** Pages
-kann weder die Express-APIs noch Issuer-Schlüssel, Ausstellungsdaten und
-Widerrufsdienste betreiben. Ein Actions-Runner ist ebenfalls kein dauerhafter
-App-Host: GitHub-gehostete Jobs enden spätestens nach sechs Stunden und bieten
-keinen verlässlichen dauerhaften App-Speicher oder öffentlichen Server-Endpunkt.
-Self-hosted Runner würden wiederum einen eigenen Server voraussetzen.
+```bash
+docker compose --env-file .env -f compose.yaml config --quiet
+docker compose --env-file .env -f compose.yaml pull
+docker compose --env-file .env -f compose.yaml up -d --wait
+curl --fail --silent --show-error http://localhost:3000/api/health
+docker compose --env-file .env -f compose.yaml logs --tail=80 app
+```
 
-| Variante | Laufzeit | Aufwand für Teilnehmende | Einordnung |
-|---|---|---|---|
-| Zentrale und getrennte Issuer auf einem Workshop-VPS | Eigene Container, Schlüssel und Volumes je Issuer; Reverse Proxy mit HTTPS | Browser öffnen | Am zuverlässigsten; selbständige Issuer-Identitäten, aber kein Hosting auf dem eigenen Notebook |
-| Zentrale auf VPS, persönlicher Issuer in GitHub Codespaces | Eigener Workspace mit öffentlich freigegebenem App-Port | Codespace starten, Issuer einrichten | Nahe am persönlichen Hosting, ohne lokale Docker-/Tunnelinstallation |
-| Zentrale und Issuer lokal mit Tunnel-Sidecar | Rechner betreiben App und cloudflared gemeinsam in Compose | Startskript ausführen | Umgesetzt; Docker-Tunnel, URL-Übernahme und Erreichbarkeitsprüfung sind automatisiert |
-| Nur Kiosk-Oberfläche auf GitHub Pages | Statisches Frontend, Workshop-API weiterhin auf VPS | Browser öffnen | Machbar, ersetzt aber keinen Backend-Host und bringt zusätzliche CORS-/URL-Konfiguration mit |
+Der Health-Endpunkt antwortet mit `{"ok":true,"role":"workshop"}`; die historische
+Rollenbezeichnung bedeutet **keinen zweiten Server**. Ein Host-Admin-Token wird
+automatisch erzeugt und mit privaten Freischalt-Links protokolliert.
+Nur die Moderation öffnet damit `/admin.html`. Logs und Links nicht teilen.
+Die öffentliche HTTPS-Adresse ebenfalls mit `/api/health` prüfen, danach nur
+die normalen Browser-Links für Organisation, Wallet und Kiosk verteilen.
 
-Für den **Pages-Kiosk** müssten API-Adresse und Asset-Basispfad konfigurierbar
-werden. Aktuell verwenden die Seiten Root-Pfade und Same-Origin-API-Aufrufe.
-Projekt-Pages liegen dagegen üblicherweise unter `/<repository>/`.
-Die Workshop-API müsste genau den Kiosk-Origin per CORS erlauben, inklusive
-der Erstellung von Check-in-Anfragen; Wallet-QRs müssten weiterhin auf die
-feste Wallet-Adresse der Zentrale zeigen. Keine Admin-Token, Schlüssel oder
-Personendaten dürfen in Pages-Builds eingebettet werden.
+Die Standard-Compose-Datei enthält **keinen Build** und keinen Tunnel-Service.
+Sie zieht das Image aus GHCR. Der Container läuft als `node`, mit
+schreibgeschütztem Root-Dateisystem, beschreibbarem Datenvolume und `/tmp`.
 
-**Codespaces** bietet pro Person einen isolierten Workspace und eine
-öffentliche Port-URL mit HTTPS am GitHub-Proxy. Der App-Port muss öffentlich
-sein, damit Smartphone und Zentrale ohne GitHub-Anmeldung zugreifen können;
-Organisationsrichtlinien können das verbieten. Workspace-Speicher bleibt bei
-einem Stop erhalten, aber nicht nach dem Löschen des Codespaces. Idle-Stop,
-Kontingente und Kosten müssen für die Workshop-Dauer berücksichtigt werden.
-Die feste Codespace-URL ist als `PUBLIC_URL` zu verwenden; ein neu angelegter
-Codespace mit neuer URL benötigt neue Registrierung und neue Ausweise.
-Das ersetzt cloudflared durch GitHubs Port-Proxy, nicht durch GitHub Pages.
+### Betrieb, Updates und Daten
 
-**Pipelines können den Vorbereitungsteil vereinfachen:** Tests ausführen,
-ein versioniertes Image in GHCR veröffentlichen und die Zentrale auf dem VPS
-aktualisieren. Ein separates Startskript oder ein Compose-Tunnel-Sidecar kann
-dann auf dem Notebook den Tunnel starten, die URL prüfen, die lokale
-Konfiguration setzen und den Issuer starten. Ein CI-Job allein erreicht
-aber nicht das private Notebook und hält es nicht für die Person online.
-Quick-Tunnel-URLs wechseln; für wiederholbare Workshops sind stabile,
-vorab zugewiesene Named-Tunnel-Hostnamen oder Codespaces/VPS-Adressen besser.
-Globale Cloudflare-Zugangsdaten gehören nicht auf Teilnehmer-Notebooks.
+Für Updates `DEMO_IMAGE` bei Bedarf ändern und dieselben `pull`-/`up`-Befehle
+ausführen; den bestehenden Terminal-Tunnel dafür **nicht neu starten**.
+Bei einem App-Neustart den neuen Admin-Token aus den Logs verwenden.
 
-Empfohlene Reihenfolge: **versioniertes Image und zentrale VPS-Bereitstellung**,
-danach **Codespaces als installationsarmen Teilnehmerweg**; optional ein
-lokales Compose-Tunnel-Profil für den Lernpfad „selbst hosten“.
-Einen separaten Pages-Kiosk würde ich erst ergänzen, wenn die Trennung
-von Frontend und Backend selbst ein Ziel ist. Registrierung und menschliche
-Vertrauensentscheidung bleiben unabhängig vom automatisierten Hosting.
+```bash
+docker compose --env-file .env -f compose.yaml down
+```
 
-Quellen:
-[GitHub Pages](https://docs.github.com/en/pages/getting-started-with-github-pages/what-is-github-pages),
-[Actions-Limits](https://docs.github.com/en/actions/reference/limits),
-[Codespaces-Portfreigaben](https://docs.github.com/en/codespaces/developing-in-a-codespace/forwarding-ports-in-your-codespace).
+Das stoppt nur die zentrale App und erhält das Volume. Den Tunnel separat
+mit **Strg+C** in Terminal 1 beenden. **Kein `down -v` und kein Volume-Prune**
+für diesen Ablauf.
+
+Das neue Projekt heißt `eudi-hosted`; seine neue Volume-Ressource heißt
+`hosted-data` (standardmäßig Docker-Volume `eudi-hosted_hosted-data`).
+Sie enthält alle Organisationsidentitäten, Schlüssel und dauerhaften Listen.
+Compose setzt `DATA_DIR=/app/data`; dort liegen die versionierten Dateien
+`hosted-schema.json` und `hosted-state.json`. Bei einem nativen Entwicklungsstart
+ohne `DATA_DIR` verwendet der Server stattdessen den lokalen Ordner `hosted-data/`,
+der aus Git und dem Docker-Build-Kontext ausgeschlossen ist.
+Zur Sicherung die App bewusst stoppen und das **gesamte neue Volume** geschützt
+sichern; Schlüssel und zugehörige Ausstellungs-/Widerrufsdaten gehören zusammen.
+Wallet-Schlüssel und Ausweise im Browser sind davon nicht erfasst.
+
+**Keine Migration der alten Zwei-Server-Daten:** Alte Workshop-/Issuer-Volumes
+und lokale Daten sind mit dem zentralen Mandantenmodell nicht kompatibel.
+Nicht in das neue Volume kopieren oder daran mounten. Diese Einrichtung
+liest, löscht und verändert sie nicht; Organisationen und Ausweise neu anlegen.
+Liegen alte `identity.json`, `credentials.json`, `issuers.json` oder
+`attendees.json` im konfigurierten Datenverzeichnis, verweigert der Server
+den Start ausdrücklich; er migriert oder entfernt diese Dateien nicht.
+Alte Server bei Bedarf bewusst separat stoppen, falls sie den Host-Port belegen.
+`compose.issuer.yaml` ist entfallen. Vorhandene `.env.issuer` und `.env.workshop`
+werden von den obigen Befehlen **nicht eingelesen** und müssen nicht gelöscht
+oder verändert werden. Alte automatisch gespeicherte Tunneladressen werden
+ebenfalls nicht verwendet.
+
+### Alte App-Container gezielt stoppen
+
+Nur beim Umstieg: Vor dem ersten Start von `eudi-hosted` die eigenen alten
+App-Container anzeigen. Die Compose-Labels funktionieren auch nach Entfernung
+der alten Compose-Dateien und benötigen keine alte Env-Datei:
+
+```bash
+docker ps --filter label=com.docker.compose.project=eudi-workshop --filter label=com.docker.compose.service=app --format 'table {{.ID}}\t{{.Names}}\t{{.Ports}}'
+docker ps --filter label=com.docker.compose.project=eudi-issuer --filter label=com.docker.compose.service=app --format 'table {{.ID}}\t{{.Names}}\t{{.Ports}}'
+```
+
+IDs, Namen und Ports prüfen. **Nur eigene alte App-Container** auswählen.
+Im folgenden Befehl `CONTAINER_ID` durch genau eine zuvor geprüfte ID ersetzen
+und den Befehl bei Bedarf für die andere alte App wiederholen:
+
+```bash
+docker stop CONTAINER_ID
+```
+
+Bei leeren Listen nichts stoppen. Bei bewusst abweichenden alten Projektnamen
+den jeweiligen Projektfilter entsprechend anpassen; keine pauschalen
+Stop-Befehle für alle Container verwenden. `docker stop` erhält Container
+und Datenvolumes. Es ist kein `down`, `rm`, `-v` oder Prune nötig; alte
+Volumes und `.env.issuer` nicht löschen oder ändern. Erst danach die neue
+zentrale App starten. Den neuen Terminal-Tunnel dafür nicht erneut starten.
+
+Details zu URL-Wechseln und Problemen: [Tunnel im Terminal](docs/TUNNELS.md).
+
+## Optional: lokaler Quellcode-Build
+
+Nur für Entwicklung oder vor der ersten GHCR-Veröffentlichung; nicht pro
+teilnehmender Person. Git und eine lokale Docker-Buildx-/BuildKit-Installation
+sind nötig, aber weiterhin kein Node.js/npm auf dem Host.
+
+```bash
+git clone https://github.com/nikschul/eudi_wallet_demo.git
+cd eudi_wallet_demo
+test -e .env || cp .env.example .env
+```
+
+`PUBLIC_URL` wie oben konfigurieren. Den bereits laufenden nativen Tunnel
+weiterverwenden, nicht zusätzlich starten. Der explizite Override ersetzt
+GHCR-Pulls durch einen lokalen Build:
+
+```bash
+docker compose --env-file .env -f compose.yaml -f compose.local.yaml up -d --build --wait
+```
+
+Das lokale Image heißt `eudi-wallet-demo:local`. Der Build verwendet Node.js 24,
+installiert die Lockfile-Abhängigkeiten und führt im Dockerfile-Stage `verified`
+**`npm run check` und `npm test`** aus, bevor das Runtime-Image erstellt wird.
+Das Node-24-Runtime-Image enthält kein Bash und benötigt kein Docker-Tunnel-Image.
+Auch für Logs oder `down` beide Compose-Dateien angeben. Der Override verwendet
+dasselbe neue `hosted-data`-Volume; lokale und vorgebaute Variante nicht als
+zwei konkurrierende Instanzen betreiben.
+
+## GHCR: erste Veröffentlichung
+
+Der Workflow [Container images](.github/workflows/images.yaml) baut
+**linux/amd64 und linux/arm64**. Beide Architekturen müssen zuerst im
+Dockerfile-Stage `verified` die bestehenden Checks und Tests bestehen.
+Erst danach wird das Runtime-Image veröffentlicht.
+
+| Ereignis | Ergebnis |
+|---|---|
+| Push nach `main` | Publiziert `main`, `latest` und `sha-<vollständige Commit-SHA>` |
+| Push eines `v*`-Tags oder veröffentlichtes GitHub-Release | Publiziert das Tag, bei Semver auch z. B. `1.2.3`, sowie das SHA-Tag |
+| `workflow_dispatch` / „Run workflow“ | Manuell bauen und veröffentlichen; auf `main` auch `main` und `latest` |
+| Pull Request nach `main` | Nur `verified` bauen/testen, kein Login und kein Push |
+
+`latest` folgt ausschließlich `main`, nicht automatisch einem Release.
+Ein manueller Lauf auf einem anderen Branch erzeugt dessen Branch- und SHA-Tag.
+Tag-Push und Release können zwei Läufe für denselben Stand auslösen.
+Der Image-Name wird dynamisch aus **`github.repository` in Kleinschreibung**
+gebildet; der kanonische GitHub-Repositoryname ist
+**`nikschul/eudi_wallet_demo`**, das Image damit
+**`ghcr.io/nikschul/eudi_wallet_demo`**. Ein alter lokaler Git-Remote-Name kann
+nach einer Umbenennung weiterleiten; maßgeblich ist der kanonische
+Repositoryname in GitHub Actions, nicht der alte Name in der Remote-URL.
+Bei Forks `DEMO_IMAGE` entsprechend ändern.
+Tags sind veränderbar; für einen unveränderlichen Stand den Digest aus der
+Workflow-Zusammenfassung verwenden.
+
+1. Nach Freigabe die fertigen Änderungen committen und nach GitHub pushen.
+   **Diese Anleitung und lokale Änderungen allein erzeugen kein Remote-Image.**
+2. Unter [Actions → Container images](https://github.com/nikschul/eudi_wallet_demo/actions/workflows/images.yaml)
+   den erfolgreichen `main`-Lauf abwarten
+   oder nach Aufnahme des Workflows auf dem Standardbranch „Run workflow“
+   wählen. Fehlgeschlagene Checks verhindern die Veröffentlichung.
+3. Unter den Repository-/Kontoeinstellungen GitHub Actions und GHCR-Publishing
+   zulassen. Der Publish-Job nutzt das eingebaute **`GITHUB_TOKEN`** mit
+   `packages: write`; **keine neuen GHCR-Secrets** anlegen. Nur dieser Job hat
+   Schreibrechte. PR-Code läuft ohne Paket-Schreibrechte und ohne Registry-Login;
+   es gibt keinen `pull_request_target`-Workflow.
+4. Nach dem ersten erfolgreichen Publish die Package-Einstellungen prüfen:
+   Neue GHCR-Packages können zunächst **privat** sein, auch bei öffentlichem
+   Quellcode. Für anonymes `docker compose pull` das Image ausdrücklich
+   öffentlich freigeben. Falls das Package bereits existiert, dem Repository
+   unter „Manage Actions access“ die nötigen Schreibrechte geben.
+5. Bei absichtlich privatem Package meldet sich **nur der Host** mit
+   `docker login ghcr.io -u <GitHub-Benutzername>` an und gibt einen berechtigten
+   PAT (classic) mit `read:packages` am Passwort-Prompt ein; gegebenenfalls
+   Organisations-SSO autorisieren. Token nicht in Befehle, Git oder `.env`
+   schreiben; Docker-Zugangsdaten geschützt speichern. Teilnehmende brauchen
+   keinen GHCR-Zugang.
+6. Anschließend den [Pull-/Startablauf](#host-starten-vorgebautes-image) verwenden.
+
+Die Pipeline veröffentlicht Images, **sie deployt nicht auf den Host** und
+startet keinen Tunnel. Der Host zieht Updates bewusst selbst. GitHub Pages
+kann die APIs und Schlüsselhaltung nicht betreiben; ein Actions-Runner ist
+ebenfalls kein dauerhafter App-Host.
 
 ## Grenzen und Sicherheit
 
-**Zentrale und Issuer erzeugen bei jedem Serverstart automatisch einen eigenen
-Admin-Token.** Die Server-Logs enthalten einen privaten Freischalt-Link für die
-Verwaltung sowie den Token zum manuellen Eingeben. Keine Token-Konfiguration in
-Env-Dateien nötig. Den Link nur auf dem eigenen Notebook öffnen, nicht verteilen
-oder am Beamer zeigen; auch die Logs enthalten das Geheimnis.
+**Nur der zentrale Host erzeugt bei jedem Serverstart einen Admin-Token.**
+Die Server-Logs enthalten private Freischalt-Links für die Verwaltung sowie
+den Token zum manuellen Eingeben. Keine Token-Konfiguration in Env-Dateien
+nötig. Nur die Moderation darf ihn verwenden; nicht verteilen oder am Beamer
+zeigen. Auch die Logs enthalten das Geheimnis.
 
 Der Link transportiert den Token im URL-Fragment, das nicht an den Webserver
 gesendet wird. Die UI entfernt es sofort aus der Adresszeile und merkt sich den
 Token im `sessionStorage` dieses Tabs. „Verwaltung sperren“ entfernt ihn wieder.
 Nach einem Neustart gilt nur der neue Token aus dem neuesten Startblock der Logs.
-Verwaltungs-APIs verlangen `X-Admin-Token`; Wallet, Registrierung beim zentralen
-Register und Check-in brauchen keinen Admin-Token. Die öffentlichen Kiosk-Daten
+Host-Verwaltungs-APIs verlangen `X-Admin-Token`; Organisationsassistent,
+Wallet und Check-in brauchen keinen Host-Admin-Token. Mandantenaktionen
+benötigen den eigenen Organisationszugang. Die öffentlichen Kiosk-Daten
 bleiben öffentlich sichtbar. Nur erfundene Daten verwenden; kein Produktionsbetrieb.
 
 Der vertrauliche Angebotszugang im QR, der separate Ausgabecode und der Holder-Besitznachweis bleiben
@@ -209,16 +357,20 @@ Produktions-PKI oder vollständige OpenID4VCI-/OpenID4VP-Implementierung.
 Die Moderation prüft eine DID mit menschlicher Namenszuordnung, keine Domain.
 
 Angebote gelten zehn Minuten, persönliche Check-in-Anfragen fünf Minuten.
-Neustarts verwerfen offene Vorgänge; Server-Volumes erhalten Identität und
-Listen. Die Wallet zeigt zuerst ihre Ausweisablage, technische DID-Details sind
+Ein Neustart mit neuer `PUBLIC_URL` erhält Organisationsschlüssel, Freigaben,
+Zugangszuordnungen, Ausstellungsdaten, Historie und Widerrufe im zentralen
+Volume. Angebote der alten Origin laufen ab; neue Angebote verwenden die neue
+Adresse. Kein Volume-Reset nötig. Bereits ausgestellte Ausweise mit alter
+Statuslisten-URL müssen neu ausgestellt werden. Die Wallet zeigt zuerst ihre
+Ausweisablage, technische DID-Details sind
 nachgeordnet. Offline bleiben gespeicherte Ausweise sichtbar; Ausstellung und
-Check-in brauchen die Server. Issuer-Vertrauen wird im Setup verwaltet, nicht
+Check-in brauchen den zentralen Server. Organisationsvertrauen wird im Setup verwaltet, nicht
 als ausstehende Freigabe auf dem gespeicherten Credential angezeigt.
 
 Alle Smartphone-Schritte im selben normalen Safari-/Chrome-Browser durchführen,
 keine PWA-Installation nötig. Auf iOS können installierte Web-Apps getrennten
 Speicher haben. Eine neue zentrale URL bedeutet einen anderen Browser-Speicher.
-Privates LAN-HTTP reicht nicht; beide öffentlichen HTTPS-Tunnel müssen vom
+Privates LAN-HTTP reicht nicht; die eine öffentliche HTTPS-Origin muss vom
 Smartphone erreichbar sein. Netzfilter können diese Verbindung verhindern.
 
 Docker-/Compose-Laufzeit, Linux-/WSL-Tunnelbetrieb und echte iOS-/Android-Geräte
@@ -227,8 +379,9 @@ Optional für Entwicklung mit Node.js 24 LTS: `npm ci`, `npm run check`, `npm te
 
 ## Ein eindeutiger Ablauf
 
-1. **Issuer-Setup:** Eigene Ausweisstelle registrieren. Die Moderation prüft
-   Fingerabdruck und Zuordnung und kennzeichnet den Issuer als vertrauenswürdig.
+1. **Organisationsassistent:** Am Notebook `/issuer.html` unter der gemeinsamen
+   Adresse öffnen und die Organisation anlegen. Die Moderation prüft
+   Fingerabdruck und Zuordnung und gibt die Organisation frei.
    Erst danach sind Angebote möglich. Dies ist eine bewusste Vereinfachung
    unseres Workshops, keine universelle Voraussetzung für jede SSI-Ausstellung.
 2. **Wallet einmalig einrichten:** Auf dem Smartphone unter der festen
@@ -241,9 +394,10 @@ Optional für Entwicklung mit Node.js 24 LTS: `npm ci`, `npm run check`, `npm te
    Der Code steht nicht im QR oder in der öffentlichen Angebotsantwort.
    Nach erfolgreicher Bindung kann dieselbe Wallet ohne erneute Codeeingabe
    fortsetzen, auch nach Neuladen.
-4. **Bewusst ausstellen:** Am Notebook Angaben prüfen und signieren. Die Wallet
-   prüft die Signatur und speichert den Ausweis auf Wunsch. Der Empfang erteilt
-   **keine Credential-Freigabe**.
+4. **Automatisch ausstellen:** Nach korrektem Code und Wallet-Besitznachweis
+   signiert der Server mit dem Schlüssel dieser Organisation. Keine zusätzliche
+   Signaturbestätigung am Notebook. Die Wallet prüft und speichert den Ausweis.
+   Der Empfang erteilt **keine Credential-Freigabe**.
 5. **Vorzeigen:** Empfangs-QR scannen und Angaben bewusst teilen. Der Verifier
    prüft Signatur, Gültigkeit, Bindung, sein aktuelles Issuer-Vertrauen und
    eine aktuelle signierte Widerrufsstatusliste.
@@ -262,10 +416,10 @@ zwischen ihnen. Ein neuer Tunnel-Origin kann keine alte Wallet wiederfinden.
 
 ## Credentials verwalten und widerrufen
 
-Die Issuer-Verwaltung führt eine dauerhafte Liste aller **ab dieser Version**
+Der eigene Organisationsbereich führt eine dauerhafte Liste aller
 ausgestellten Ausweise. Sie enthält Demo-Attribute, die gebundene öffentliche
 Wallet-DID, Ausstellungs-/Ablaufzeit und Widerrufszeit, aber keine privaten
-Wallet-Schlüssel. Die ausstellende Person kann einen Ausweis nach Bestätigung
+Wallet-Schlüssel. Personen mit Organisationszugang können einen eigenen Ausweis nach Bestätigung
 **unwiderruflich widerrufen**. Das funktioniert auch nach Ablauf des Angebots
 und nach einem Neustart. Ein Widerruf ändert oder löscht keine früheren
 erfolgreichen Check-in-Protokolle.
@@ -281,8 +435,8 @@ durch den Empfang.
 ### Statuslisten nach dem EUDI-Prinzip
 
 Neue Ausweise enthalten eine signierte `status.status_list`-Referenz mit
-Listen-URL und zufällig vergebenem Index. Der Issuer veröffentlicht unter
-`/api/status-list` eine ES256-signierte, komprimierte Bitliste als
+Listen-URL und zufällig vergebenem Index. Jede Organisation veröffentlicht
+unter ihrer mandantengebundenen Listen-URL eine ES256-signierte, komprimierte Bitliste als
 `application/statuslist+jwt`. Sie enthält **keine Namen, Credential-IDs oder
 Wallet-DIDs**. Wallet und Verifier laden die gemeinsame Liste, niemals einen
 personenbezogenen Status-Endpunkt. Ein Abruf verrät daher nicht, welcher
@@ -304,25 +458,15 @@ für SD-JWTs, ist aber keine vollständige interoperable oder zertifizierte
 EUDI-Implementierung. Eine Liste bietet 16.384 Plätze pro Issuer; belegte
 Indizes werden auch nach Ablauf eines Ausweises nicht erneut vergeben.
 
-### Aktualisierung und Sicherung
+### Adressen und bestehende Ausweise
 
-Beide Rollen mit `up -d --build` aktualisieren und die Seiten neu laden.
-Volumes und Wallet-Speicher **nicht löschen**. Beim Issuer gehören
-`identity.json` **und** `credentials.json` gemeinsam in die Sicherung.
-Die neue Liste wird beim erstmaligen Upgrade angelegt; spätere beschädigte
-oder fehlende Widerrufsdaten verhindern den Issuer-Start, statt alle Ausweise
-versehentlich wieder als aktiv zu veröffentlichen.
-Ein absichtlicher Issuer-Purge entfernt Identität und Credential-Liste
-gemeinsam und erzeugt beim nächsten Einrichten eine neue DID. Nur bei
-gestopptem Server und nach bewusster Sicherung verwenden.
-
-**Alte Ausweise müssen neu ausgestellt werden:** Einer bestehenden Signatur
-kann nachträglich keine Statusreferenz hinzugefügt werden. Alte Credentials
-bleiben in der Wallet sichtbar, gelten für diesen Check-in aber als nicht
-prüfbar. Die bisherige Version hat keine dauerhafte Ausstellungsübersicht
-geführt; diese alte Historie lässt sich nicht zuverlässig rekonstruieren.
-Auch die Issuer-Adresse muss für die signierte Listen-URL stabil bleiben;
-bei einer neuen Domain die Ausweise neu ausstellen.
+Updates und Sicherungen betreffen nur noch die zentrale App und ihr neues
+Volume; siehe [Betrieb, Updates und Daten](#betrieb-updates-und-daten).
+Organisationsidentitäten, Schlüssel und Widerrufsdaten nicht voneinander trennen.
+Alte Ausweise aus dem Zwei-Server-Modell werden nicht übernommen.
+Auch die zentrale öffentliche Adresse muss für signierte Listen-URLs stabil
+bleiben; bei einer neuen Domain Ausweise neu ausstellen und Browserzugänge
+mit der Moderation klären.
 
 Quelle: [EUDI ARF, Abschnitt 6.6.3.7 – Revocation checking](https://eudi.dev/latest/main/06-trust-model/#6637-relying-party-verifies-that-the-pid-or-attestation-is-not-revoked).
 
@@ -343,7 +487,8 @@ beidseits anzuzeigende Zahlen sind keine allgemeine EUDI-Vorgabe. Bei einem
 reinen Vergleichscode müssten die Anzeigen gerade gleich sein.
 
 Unser Ausgabecode bildet nur das Prinzip des optionalen `tx_code` nach:
-eigene `/claim`-API statt OAuth-Token-Endpoint, bewusste Signatur am Notebook,
+eigene Claim-API statt OAuth-Token-Endpoint, automatische Signatur nach
+korrektem Code und Wallet-Besitznachweis,
 keine vollständige OpenID4VCI-Implementierung. Das Anzeigen von QR und Code
 am selben Notebook ist ein Workshop-UX-Mittel, kein unabhängiger zweiter
 Faktor und keine echte Identitätsprüfung. Nur den Code dieses Issuers eingeben,

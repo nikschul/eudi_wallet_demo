@@ -1,5 +1,4 @@
 import { createApp } from './app.js';
-import { createIssuerApp } from './issuer-app.js';
 import { fileURLToPath } from 'node:url';
 
 const port = Number(process.env.PORT || 3000);
@@ -8,21 +7,21 @@ const localPort = Number(process.env.HOST_PORT || port);
 if (!Number.isInteger(localPort) || localPort < 1 || localPort > 65535) throw new Error('HOST_PORT muss zwischen 1 und 65535 liegen.');
 const publicUrl = process.env.PUBLIC_URL || `http://localhost:${port}`;
 const role = process.env.APP_ROLE || 'workshop';
-if (!['workshop', 'issuer'].includes(role)) throw new Error('APP_ROLE muss workshop oder issuer sein.');
-const factory = role === 'issuer' ? createIssuerApp : createApp;
-const { app, adminToken } = await factory({
+if (role !== 'workshop') throw new Error('Der separate Issuer-Modus wurde ersetzt. Bitte nur die zentral gehostete Workshop-App starten.');
+if (process.env.WORKSHOP_URL) throw new Error('WORKSHOP_URL gehört zum alten Zwei-Server-Modus. Bitte nur PUBLIC_URL für die Hosted-App setzen.');
+const { app, adminToken } = await createApp({
   publicUrl,
-  workshopUrl: process.env.WORKSHOP_URL,
   trustMode: process.env.TRUST_MODE || 'manual',
   verifierName: process.env.VERIFIER_NAME || undefined,
   eventTitle: process.env.EVENT_TITLE || undefined,
-  dataDirectory: process.env.DATA_DIR || fileURLToPath(new URL('../data/', import.meta.url)),
+  dataDirectory: process.env.DATA_DIR || fileURLToPath(new URL('../hosted-data/', import.meta.url)),
 });
 const server = app.listen(port, '0.0.0.0', () => {
   console.log(`EUDI-Demo: ${publicUrl}`);
-  console.log(`Rolle: ${role === 'issuer' ? 'Eigene Ausweisstelle' : 'Workshop-Zentrale'}`);
-  console.log(role === 'issuer' ? `Ausweisstelle: http://localhost:${localPort}/issuer.html` : `Kiosk: ${publicUrl}/kiosk.html`);
-  const managementPath = role === 'issuer' ? '/issuer.html' : '/admin.html';
+  console.log('Rolle: Zentral gehosteter Workshop');
+  console.log(`Organisation anlegen: ${publicUrl}/issuer.html`);
+  console.log(`Kiosk: ${publicUrl}/kiosk.html`);
+  const managementPath = '/admin.html';
   const unlockLink = (base) => {
     const url = new URL(managementPath, base);
     url.hash = `admin-token=${adminToken}`;

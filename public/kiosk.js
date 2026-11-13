@@ -1,4 +1,4 @@
-import { el, api, steps, labels, attributes, raw, formatTime, run, setupPage, showError, clearError } from './lib/ui.js';
+import { el, api, steps, labels, attributes, raw, formatTime, action, notify, run, setupPage, showError, clearError } from './lib/ui.js';
 
 let current = null;
 let creating = false;
@@ -44,14 +44,12 @@ function updateIssuers(issuers) {
     const signature = JSON.stringify(issuer);
     if (signature === view.signature) continue;
     view.signature = signature;
-    const trusted = issuer.trusted && issuer.proofVerified && issuer.ownerName;
-    view.name.textContent = issuer.ownerName || issuer.employeeName || issuer.name;
-    view.label.textContent = issuer.name;
-    view.status.className = `badge ${trusted ? '' : 'badge-warn'}`;
-    view.status.textContent = trusted ? 'Issuer vertrauenswürdig' : issuer.proofVerified
-      ? 'Registriert · nicht vertraut' : 'Registriert · Schlüsselbeweis fehlt';
+    view.name.textContent = issuer.name;
+    view.label.textContent = issuer.did;
+    view.status.className = `badge ${issuer.state === 'approved' ? '' : 'badge-warn'}`;
+    view.status.textContent = { pending: 'Ausstehend · Freigabe fehlt', approved: 'Freigegeben · aktuell vertraut', suspended: 'Gesperrt · aktuell nicht vertraut' }[issuer.state];
     view.checkins.textContent = `${issuer.checkinCount} erfolgreiche Check-in(s)`;
-    view.search = [issuer.name, issuer.ownerName, issuer.employeeName, issuer.did, issuer.fingerprint]
+    view.search = [issuer.name, issuer.did, issuer.fingerprint]
       .filter(Boolean).join(' ').toLocaleLowerCase('de');
   }
   filterIssuers();
@@ -91,14 +89,15 @@ async function attendees() {
           el('time', { datetime: person.time }, formatTime(person.time))),
         person.checkins?.length ? [...person.checkins].reverse().map((checkin) => el('article', { class: 'checkin-record' },
           el('h3', {}, `Mitarbeiterausweis · ${formatTime(checkin.time)}`),
-          el('p', {}, `Aussteller: ${checkin.issuerName}`),
-          el('p', { class: 'muted' }, `Beim Check-in vertrauter Issuer von ${checkin.issuerOwner}`),
+          el('p', {}, `Ausstellende Organisation: ${checkin.issuerName}`),
+          el('p', { class: 'muted' }, 'Vertrauen zum Check-in-Zeitpunkt; heutige Organisationsfreigabe und aktueller Ausweiswiderruf sind davon unabhängig.'),
           attributes(checkin.claims),
           el('p', { class: 'muted' }, `Nicht geteilt: ${['organisation', 'role'].filter((field) => !Object.hasOwn(checkin.claims, field)).map((field) => labels[field]).join(', ') || 'keine optionalen Felder'}`),
           el('p', { class: 'did' }, `Credential-ID: ${checkin.credentialId.slice(0, 16)}…`),
           raw({
             credentialType: checkin.credentialType, credentialId: checkin.credentialId,
-            issuerDid: checkin.issuerDid, issuerName: checkin.issuerName, issuerOwner: checkin.issuerOwner,
+            issuerDid: checkin.issuerDid, issuerName: checkin.issuerName,
+            holderDid: checkin.holderDid || person.holderDid,
             sharedClaims: checkin.claims, time: checkin.time, trustedAtCheckin: checkin.trustedAtCheckin,
           }, 'Prüfbare Check-in-Metadaten')))
           : el('p', { class: 'muted' }, 'Alter Eintrag ohne Disclosure-Protokoll. Für den neuen Workshop erneut einchecken.'));
@@ -115,7 +114,7 @@ function showAttempt(attempt) {
   box.className = `kiosk-result ${done ? 'success' : attempt.status === 'error' ? 'failure' : ''}`;
   box.replaceChildren(
     el('h2', {}, `${attempt.name} · ${done ? 'eingecheckt' : attempt.status === 'processing' ? 'wird geprüft' : 'nicht eingecheckt'}`),
-    el('p', {}, done ? `Aussteller: ${attempt.issuerName}` : attempt.error || 'Signatur, Vertrauen und Wallet-Bindung werden geprüft.'),
+    el('p', {}, done ? `Organisation: ${attempt.issuerName}` : attempt.error || 'Signatur, Vertrauen und Wallet-Bindung werden geprüft.'),
     el('p', { class: 'muted attempt-code' },
       `Letzter Versuch ${attempt.id.slice(0, 8)}${attempt.failedAt ? ` · ${attempt.failedAt}` : ''}${!attempt.identityVerified ? ' · Name noch ungeprüft' : ''}`),
   );
@@ -163,10 +162,16 @@ async function dashboard() {
 }
 
 function applyConfig(value) {
+  const expected = new URL('/issuer.html', value.publicUrl).href;
+  if (value.issuerSetupUrl !== expected || !value.issuerSetupQrDataUrl) {
+    throw new Error('Die öffentliche Organisationseinrichtung fehlt oder hat eine ungültige Adresse. Bitte den Host informieren.');
+  }
+  document.getElementById('issuer-setup-qr').src = value.issuerSetupQrDataUrl;
+  document.getElementById('issuer-setup-qr').hidden = false;
+  document.getElementById('issuer-setup-link').href = value.issuerSetupUrl;
+  document.getElementById('issuer-setup-link').textContent = value.issuerSetupUrl;
+  document.getElementById('copy-issuer-setup').disabled = false;
   config = value;
-  document.getElementById('start-qr').src = value.startQrDataUrl;
-  document.getElementById('start-qr').hidden = false;
-  document.getElementById('public-url').textContent = value.publicUrl;
 }
 
 async function poll() {
@@ -193,6 +198,11 @@ async function poll() {
 }
 
 document.getElementById('issuer-search').addEventListener('input', filterIssuers);
+action(document.getElementById('copy-issuer-setup'), async () => {
+  if (!navigator.clipboard) throw new Error('Kopieren ist hier nicht möglich. Markiere die sichtbare Organisationsadresse und kopiere sie manuell.');
+  await navigator.clipboard.writeText(config.issuerSetupUrl);
+  notify('Öffentliche Adresse zur Organisationseinrichtung kopiert. Am Laptop öffnen.');
+});
 window.addEventListener('pagehide', () => {
   stopped = true;
 });

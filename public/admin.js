@@ -1,4 +1,4 @@
-import { el, api, steps, raw, action, formAction, run, setupPage, notify, showError } from './lib/ui.js';
+import { el, api, steps, raw, action, run, setupPage, notify, showError, formatTime } from './lib/ui.js';
 import { managementAccess } from './lib/management.js';
 
 const issuerViews = new Map();
@@ -6,6 +6,7 @@ let refreshVersion = 0;
 let refreshTimer;
 let stopped = true;
 let unlocked = false;
+let accessGeneration = 0;
 const access = managementAccess({
   prefix: '/admin',
   content: document.getElementById('admin-content'),
@@ -16,9 +17,14 @@ const access = managementAccess({
   },
   onLock: () => {
     unlocked = false;
+    accessGeneration += 1;
     stopped = true;
     refreshVersion += 1;
     clearTimeout(refreshTimer);
+    for (const view of issuerViews.values()) {
+      view.recoveryLink.value = '';
+      view.recoveryResult.hidden = true;
+    }
     issuerViews.clear();
     document.getElementById('issuers').replaceChildren();
     document.getElementById('replay-result').replaceChildren();
@@ -41,65 +47,103 @@ function filterIssuers() {
 }
 
 function createIssuerView(issuer) {
-  const view = { issuer, savedOwner: issuer.ownerName || issuer.employeeName || '', busy: false };
+  const view = { issuer, busy: false };
   view.name = el('strong');
   view.label = el('span', { class: 'muted' });
   view.badge = el('span');
   view.checkins = el('span', { class: 'issuer-checkins' });
-  view.employee = el('p');
+  view.identity = el('p');
+  view.did = el('p', { class: 'did' });
   view.fingerprint = el('p', { class: 'did fingerprint' });
   view.proof = el('p', { class: 'muted' });
-  view.assigned = el('input', {
-    name: 'ownerName', required: true, maxlength: 120, value: view.savedOwner,
-    placeholder: 'Geprüfter Name der Person', autocomplete: 'off',
-  });
-  view.approve = el('button', { type: 'submit' });
-  const form = formAction(el('form', { class: 'inline-form' },
-    el('label', { class: 'field grow' }, 'Dieser Issuer gehört zu Mitarbeitendem', view.assigned), view.approve),
-    async (data) => {
-      if (view.busy) return;
-      if (!view.issuer.proofVerified) throw new Error('Zuerst muss der Issuer seinen Schlüsselbesitz nachweisen.');
-      const ownerName = data.get('ownerName').trim();
-      if (!ownerName) throw new Error('Trage zuerst ein, zu welcher Person dieser Issuer gehört.');
-      view.busy = true;
-      updateIssuerActions(view);
-      try {
-        await admin(`/issuers/${encodeURIComponent(issuer.did)}/trust`, { trusted: true, ownerName });
-        notify(`Der Empfang vertraut jetzt dem Issuer von ${ownerName}. Das Issuer-Setup ist abgeschlossen; am Notebook kannst du jetzt Ausweise ausstellen.`);
-        await refresh();
-      } finally {
-        view.busy = false;
-        updateIssuerActions(view);
-      }
-    });
-  view.revoke = el('button', { type: 'button', class: 'secondary danger' }, 'Vertrauen entziehen');
-  view.revoke.addEventListener('click', () => run(async () => {
-    if (view.busy || !view.issuer.trusted) return;
-    const current = view.issuer;
-    if (!confirm(`Dem Issuer von ${current.ownerName || current.employeeName || current.name} das Vertrauen entziehen? Bereits ausgestellte Ausweise werden beim nächsten Check-in abgelehnt.`)) return;
+  view.approve = el('button', { type: 'button' });
+  view.approve.addEventListener('click', () => run(async () => {
+    if (view.busy || view.issuer.state === 'approved') return;
+    if (!confirm(`Organisation „${view.issuer.name}“ freigeben? Der Empfang vertraut dann ihrem Ausstellerschlüssel. Einzelne Ausweise werden hier nicht freigegeben.`)) return;
     view.busy = true;
     updateIssuerActions(view);
     try {
-      await admin(`/issuers/${encodeURIComponent(issuer.did)}/trust`, { trusted: false });
-      notify('Vertrauen entzogen. Bestehende Check-in-Protokolle bleiben als historischer Stand erhalten.');
+      await admin(`/issuers/${encodeURIComponent(issuer.did)}/trust`, { trusted: true });
+      notify(`Organisation „${view.issuer.name}“ freigegeben. Sie kann jetzt am Laptop Ausweise ausstellen.`);
       await refresh();
     } finally {
       view.busy = false;
       updateIssuerActions(view);
     }
   }));
-  view.metadata = raw({}, 'Öffentliche Issuer-Daten');
+  view.revoke = el('button', { type: 'button', class: 'secondary danger' }, 'Organisation sperren');
+  view.revoke.addEventListener('click', () => run(async () => {
+    if (view.busy || view.issuer.state !== 'approved') return;
+    const current = view.issuer;
+    if (!confirm(`Organisation „${current.name}“ sperren? Ihre Ausweise werden bei künftigen Check-ins abgelehnt. Das widerruft keine einzelnen Ausweise und ändert keine historischen Protokolle.`)) return;
+    view.busy = true;
+    updateIssuerActions(view);
+    try {
+      await admin(`/issuers/${encodeURIComponent(issuer.did)}/trust`, { trusted: false });
+      notify('Organisation gesperrt. Bestehende Check-in-Protokolle bleiben als historischer Stand erhalten.');
+      await refresh();
+    } finally {
+      view.busy = false;
+      updateIssuerActions(view);
+    }
+  }));
+  view.recoveryLink = el('input', { type: 'text', readonly: true, autocomplete: 'off', spellcheck: 'false' });
+  view.recoveryExpiry = el('p', { class: 'muted' });
+  view.copyRecovery = action(el('button', { type: 'button', class: 'secondary' }, 'Privaten Link kopieren'), async () => {
+    if (!navigator.clipboard) throw new Error('Kopieren ist hier nicht möglich. Markiere den privaten Link im Feld und kopiere ihn manuell.');
+    await navigator.clipboard.writeText(view.recoveryLink.value);
+    notify('Privaten Wiederherstellungslink kopiert. Nur der berechtigten Organisation mitteilen.');
+  });
+  view.recoveryResult = el('div', { class: 'stack organisation-recovery-result', hidden: true },
+    el('label', { class: 'field' }, 'Privater, einmaliger Wiederherstellungslink', view.recoveryLink),
+    view.recoveryExpiry, view.copyRecovery,
+    el('p', { class: 'muted' }, 'Falls Kopieren nicht erlaubt ist: das Feld markieren und den Link manuell kopieren.'),
+    el('p', { class: 'message warning' }, 'Nicht veröffentlichen, nicht am Kiosk zeigen. Dies ist kein Host-Admin-Token. Nur der berechtigten Organisation über einen privaten Kanal geben. Der Link ersetzt keine Freigabe.'));
+  view.recover = el('button', { type: 'button', class: 'secondary' }, 'Privaten Wiederherstellungslink erstellen');
+  view.recover.addEventListener('click', () => run(async () => {
+    if (view.busy) return;
+    if (!confirm(`Browserzugang für „${view.issuer.name}“ wiederherstellen? Prüfe zuerst die Berechtigung. Sobald der einmalige Link erfolgreich geöffnet und eingelöst wurde, wird der bisherige Organisationszugang ungültig.`)) return;
+    const generation = accessGeneration;
+    view.busy = true;
+    view.recoveryResult.hidden = true;
+    view.recoveryLink.value = '';
+    view.recoveryExpiry.textContent = '';
+    updateIssuerActions(view);
+    try {
+      const result = await admin(`/organisations/${encodeURIComponent(view.issuer.id)}/recovery`, {});
+      if (!unlocked || generation !== accessGeneration || issuerViews.get(issuer.did) !== view) return;
+      if (!result?.url || !Number.isFinite(Date.parse(result.expiresAt))) {
+        throw new Error('Der Server hat keinen gültigen Wiederherstellungslink mit Ablaufzeit geliefert.');
+      }
+      view.recoveryLink.value = result.url;
+      view.recoveryExpiry.textContent = `Gültig bis ${formatTime(result.expiresAt)} · nur einmal einlösbar.`;
+      view.recoveryResult.hidden = false;
+      view.recoveryLink.focus();
+      view.recoveryLink.select();
+      notify('Privater Wiederherstellungslink erstellt. Der alte Browserzugang bleibt bis zur erfolgreichen Einlösung gültig.');
+    } finally {
+      view.busy = false;
+      updateIssuerActions(view);
+    }
+  }));
+  view.recovery = el('details', { class: 'organisation-recovery' },
+    el('summary', {}, 'Organisationszugang wiederherstellen · nur Host'),
+    el('p', {}, 'Nur nach Prüfung der Berechtigung: Der Link ist privat, läuft ab und kann einmal eingelöst werden. Erfolgreiches Einlösen widerruft den bisherigen Browserzugang dieser Organisation. Name, Schlüssel, Ausweise und Freigabestatus bleiben unverändert.'),
+    view.recover, view.recoveryResult);
+  view.metadata = raw({}, 'Öffentliche Organisationsdaten');
   view.node = el('details', { class: 'issuer-registration' },
     el('summary', {},
       el('span', { class: 'issuer-heading' }, view.name, view.label),
       el('span', { class: 'issuer-status' }, view.badge, view.checkins)),
-    el('div', { class: 'issuer-approval' }, view.employee, view.fingerprint, view.proof, form, view.revoke, view.metadata));
+    el('div', { class: 'issuer-approval' }, view.identity, view.did, view.fingerprint, view.proof,
+      el('div', { class: 'actions' }, view.approve, view.revoke), view.metadata, view.recovery));
   return view;
 }
 
 function updateIssuerActions(view) {
-  view.approve.disabled = view.busy || !view.issuer.proofVerified;
-  view.revoke.disabled = view.busy || !view.issuer.trusted;
+  view.approve.disabled = view.busy || view.issuer.state === 'approved';
+  view.revoke.disabled = view.busy || view.issuer.state !== 'approved';
+  view.recover.disabled = view.busy;
 }
 
 function updateIssuerView(view, issuer) {
@@ -107,30 +151,26 @@ function updateIssuerView(view, issuer) {
   if (signature === view.signature) return;
   view.signature = signature;
   view.issuer = issuer;
-  const trusted = issuer.trusted && issuer.proofVerified && issuer.ownerName;
-  view.status = !issuer.proofVerified ? 'unverified' : trusted ? 'trusted' : 'untrusted';
-  view.name.textContent = issuer.ownerName || issuer.employeeName || issuer.name;
-  view.label.textContent = issuer.name;
-  view.badge.className = `badge ${trusted ? '' : 'badge-warn'}`;
-  view.badge.textContent = trusted ? 'Issuer vertrauenswürdig' : issuer.proofVerified
-    ? 'Registriert · nicht vertraut' : 'Registriert · Schlüsselbeweis fehlt';
+  view.status = issuer.state;
+  view.name.textContent = issuer.name;
+  view.label.textContent = issuer.did;
+  view.badge.className = `badge ${issuer.state === 'approved' ? '' : 'badge-warn'}`;
+  view.badge.textContent = { pending: 'Ausstehend · Freigabe fehlt', approved: 'Freigegeben · aktuell vertraut', suspended: 'Gesperrt · aktuell nicht vertraut' }[issuer.state];
   view.checkins.textContent = `${issuer.checkinCount} erfolgreiche Check-in(s)`;
-  view.employee.textContent = `Angemeldet als: ${issuer.employeeName || 'Altbestand – erneute Anmeldung erforderlich'}`;
-  view.fingerprint.textContent = `Fingerabdruck: ${issuer.fingerprint || 'kein Schlüsselbeweis'}`;
-  view.proof.textContent = issuer.proofVerified ? '✓ Schlüsselbesitz nachgewiesen. Person außerhalb der App zuordnen.'
-    : 'Dieser Eintrag stammt aus der alten Demo. Vor der Vertrauensentscheidung muss sich der Issuer erneut registrieren.';
-  const savedOwner = issuer.ownerName || issuer.employeeName || '';
-  if (view.assigned.value === view.savedOwner && document.activeElement !== view.assigned) {
-    view.assigned.value = savedOwner;
-  }
-  view.savedOwner = savedOwner;
-  view.approve.textContent = issuer.trusted ? 'Zuordnung bestätigen' : 'Diesem Issuer vertrauen';
+  view.identity.textContent = `Organisation: ${issuer.name} · Name nach Registrierung unveränderlich.`;
+  view.did.textContent = `Öffentliche DID: ${issuer.did}`;
+  view.fingerprint.textContent = `Fingerabdruck: ${issuer.fingerprint}`;
+  view.proof.textContent = 'Der zentrale Server erzeugt und speichert für jede Organisation einen eigenen dauerhaften Signaturschlüssel. Vergleiche Name, DID und Fingerabdruck mit dem Organisationsbildschirm am Laptop.';
+  view.approve.textContent = issuer.state === 'approved' ? 'Organisation freigegeben'
+    : issuer.state === 'suspended' ? 'Organisation erneut freigeben' : 'Organisation freigeben';
   updateIssuerActions(view);
   view.metadata.querySelector('pre').textContent = JSON.stringify({
-    did: issuer.did, publicUrl: issuer.publicUrl, proofVerified: issuer.proofVerified,
-    approvedFor: issuer.ownerName, trustedAt: issuer.trustedAt,
+    id: issuer.id, name: issuer.name, did: issuer.did, fingerprint: issuer.fingerprint,
+    publicUrl: issuer.publicUrl, statusListUrl: issuer.statusListUrl,
+    state: issuer.state, trusted: issuer.trusted, proofVerified: issuer.proofVerified,
+    createdAt: issuer.createdAt, approvedAt: issuer.approvedAt,
   }, null, 2);
-  view.search = [issuer.name, issuer.ownerName, issuer.employeeName, issuer.did, issuer.fingerprint]
+  view.search = [issuer.name, issuer.did, issuer.fingerprint]
     .filter(Boolean).join(' ').toLocaleLowerCase('de');
 }
 

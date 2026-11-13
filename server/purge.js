@@ -1,13 +1,20 @@
-import { rmSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { HOSTED_SCHEMA, LEGACY_FILES } from './store.js';
 
-const directory = path.resolve(process.env.DATA_DIR || fileURLToPath(new URL('../data/', import.meta.url)));
-// Only known data files are removed, never an arbitrary DATA_DIR tree.
-const files = process.env.APP_ROLE === 'issuer' ? ['identity.json', 'credentials.json'] : ['issuers.json', 'attendees.json'];
-for (const name of files.flatMap((file) => [file, `${file}.tmp`])) {
-  rmSync(path.join(directory, name), { force: true });
+const directory = path.resolve(process.env.DATA_DIR || fileURLToPath(new URL('../hosted-data/', import.meta.url)));
+if (process.env.APP_ROLE && process.env.APP_ROLE !== 'workshop') throw new Error('Der alte Issuer-Modus wird nicht mehr unterstützt. Alte Daten werden nicht gelöscht.');
+if (LEGACY_FILES.some((file) => existsSync(path.join(directory, file)))) {
+  throw new Error('Alte Zwei-Server-Daten gefunden. Diese werden nicht gelöscht. Bitte ein neues Hosted-Datenverzeichnis verwenden.');
 }
-console.log(process.env.APP_ROLE === 'issuer'
-  ? 'Issuer-Schlüssel, Ausstellungsübersicht und Widerrufsdaten wurden gelöscht. Ein neuer Issuer benötigt eine neue Vertrauensentscheidung. Server vorher stoppen.'
-  : 'Vertrauensliste und Check-ins wurden gelöscht. Server vorher stoppen.');
+const marker = path.join(directory, 'hosted-schema.json');
+const state = path.join(directory, 'hosted-state.json');
+if (existsSync(marker)) {
+  if (JSON.parse(readFileSync(marker, 'utf8')).schema !== HOSTED_SCHEMA) throw new Error('Unbekannte Speicherversion; es wird nichts gelöscht.');
+  rmSync(state, { force: true });
+  rmSync(marker);
+} else if (existsSync(state)) {
+  throw new Error('Der Hosted-Speichermarker fehlt; es wird nichts gelöscht.');
+}
+console.log('Hosted-Organisationsschlüssel, Browser-Zugänge, Ausstellungsbelege und Check-ins wurden gelöscht. Server vorher stoppen. Alte Daten und andere Dateien bleiben unverändert.');

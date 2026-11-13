@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { deflateSync } from 'node:zlib';
+import { setTimeout as delay } from 'node:timers/promises';
 import * as sd from '../public/lib/sdjwt.js';
 import { EMPLOYEE_VCT } from '../public/lib/protocol.js';
 
@@ -43,15 +44,17 @@ async function settle() {
 }
 
 async function until(predicate) {
-  for (let attempt = 0; attempt < 1000; attempt++) {
+  const deadline = performance.now() + 5000;
+  while (performance.now() < deadline) {
     if (predicate()) return;
-    await settle();
+    await delay(2);
   }
   assert.ok(predicate(), 'Wallet did not reach the expected state');
 }
 
-const issuerUrl = 'https://issuer.example.org';
-const statusUri = `${issuerUrl}/api/status-list`;
+const issuerUrl = 'https://workshop.example.org';
+const organisationId = 'c0d15f6d-827c-4c12-8393-80506ad16336';
+const statusUri = `${issuerUrl}/api/status-lists/${organisationId}`;
 let moduleId = 0;
 
 async function signedList(issuer, revoked = [], overrides = {}) {
@@ -59,21 +62,21 @@ async function signedList(issuer, revoked = [], overrides = {}) {
   for (const index of revoked) bytes[index >> 3] |= 1 << (index % 8);
   const now = Math.floor(Date.now() / 1000);
   const token = await sd.signJwt({ alg: 'ES256', typ: 'statuslist+jwt' }, {
-    iss: issuer.did, sub: statusUri, iat: now, exp: now + 30, ttl: 30,
+    iss: issuer.did, sub: issuer.statusListUrl || statusUri, iat: now, exp: now + 30, ttl: 30,
     status_list: { bits: 1, lst: sd.b64url(deflateSync(bytes)) }, ...overrides,
   }, issuer.privateJwk);
   return new Response(token, { headers: { 'content-type': 'application/statuslist+jwt' } });
 }
 
 async function fixture(t) {
-  const issuer = await sd.generateKeyPair();
+  const issuer = { ...await sd.generateKeyPair(), statusListUrl: statusUri };
   const wallet = { ...await sd.generateKeyPair(), credentials: [] };
   async function credential(id, index, options = {}) {
     return {
       id, issuerName: 'Demo-Issuer', receivedAt: Date.now(),
       sdjwt: await sd.issueSdJwt({
         issuerDid: issuer.did, issuerPrivateJwk: issuer.privateJwk, holderPublicJwk: wallet.publicJwk,
-        vct: EMPLOYEE_VCT, claims: { given_name: 'Erika', family_name: 'Muster' },
+        vct: EMPLOYEE_VCT, claims: { given_name: 'Erika', family_name: 'Muster', organisation: 'Demo-Issuer', role: 'Mitarbeitende' },
         status: { status_list: { idx: index, uri: statusUri } }, ...options,
       }),
     };
@@ -92,7 +95,10 @@ async function fixture(t) {
   const storage = new Map([['wallet', JSON.stringify(wallet)]]);
   const state = {
     issuer, wallet, app, error, notice, browserEvents, documentEvents, location, navigation, requests, timers, storage, credential,
-    issuers: [{ did: issuer.did, publicUrl: issuerUrl, name: 'Demo-Issuer', proofVerified: true, trusted: false }],
+    issuers: [{
+      id: organisationId, did: issuer.did, publicUrl: issuerUrl, statusListUrl: statusUri,
+      name: 'Demo-Issuer', state: 'approved', proofVerified: true, trusted: false,
+    }],
     statusResponse: () => signedList(issuer), handler: null, confirmations: [], confirmed: true,
     read: () => JSON.parse(storage.get('wallet')),
     start: () => import(`../public/wallet.js?wallet-test=${++moduleId}`),
@@ -138,7 +144,7 @@ async function fixture(t) {
     removeItem: (key) => storage.delete(key),
   });
   mockGlobal(t, 'fetch', async (route, options) => {
-    if (route === '/api/config') return Response.json({ eventTitle: 'Demo' });
+    if (route === '/api/config') return Response.json({ eventTitle: 'Demo', publicUrl: issuerUrl, roles: ['Mitarbeitende', 'Teamleitung', 'Gast'] });
     requests.push(route);
     if (route === '/api/issuers') {
       if (state.registryError) throw new Error('offline');
@@ -177,6 +183,52 @@ function requestFixture(state, overrides = {}) {
       state.browserEvents.get('hashchange')();
     },
   };
+}
+
+function offerFixture(state) {
+  const id = crypto.randomUUID();
+  const token = sd.b64url(crypto.getRandomValues(new Uint8Array(32)));
+  const fragment = `#offer=${sd.jsonB64({ issuer: state.issuer.did, id, token })}`;
+  const path = `${issuerUrl}/api/offers/${id}`;
+  const claims = { given_name: 'Erika', family_name: 'Muster', organisation: 'Demo-Issuer', role: 'Gast' };
+  const offer = {
+    id, issuerDid: state.issuer.did, aud: issuerUrl, nonce: crypto.randomUUID(),
+    claims, status: 'offered', expiresAt: Math.floor(Date.now() / 1000) + 600,
+  };
+  const calls = { claim: 0, credential: 0, ack: 0 };
+  const result = { fragment, path, offer, calls, afterClaim: null };
+  state.handler = async (route, options) => {
+    assert.equal(options.headers['X-Offer-Token'], token);
+    if (route === path) {
+      if (offer.status === 'issued' && result.afterClaim) await result.afterClaim;
+      return Response.json(offer);
+    }
+    if (route === `${path}/claim`) {
+      calls.claim++;
+      const { proof, transactionCode } = JSON.parse(options.body);
+      if (transactionCode !== '123456' && offer.status === 'offered') {
+        return Response.json({ error: 'Der Ausgabecode stimmt nicht.' }, { status: 400 });
+      }
+      const { payload } = await sd.verifyJwt(proof, state.read().publicJwk);
+      assert.equal(payload.iss, state.read().did);
+      assert.equal(payload.aud, issuerUrl);
+      assert.equal(payload.nonce, offer.nonce);
+      offer.status = 'issued';
+      return Response.json({ status: 'issued' });
+    }
+    if (route === `${path}/credential`) {
+      calls.credential++;
+      return Response.json({
+        sdjwt: await sd.issueSdJwt({
+          issuerDid: state.issuer.did, issuerPrivateJwk: state.issuer.privateJwk, holderPublicJwk: state.read().publicJwk,
+          vct: EMPLOYEE_VCT, claims, status: { status_list: { idx: 1, uri: statusUri } },
+        }),
+      });
+    }
+    if (route === `${path}/ack`) { calls.ack++; return Response.json({ ok: true }); }
+    throw new Error(`Unexpected request: ${route}`);
+  };
+  return result;
 }
 
 function button(root, text) {
@@ -616,12 +668,13 @@ test('Offer code, receipt and acceptance stay functional while requiring fresh s
   };
   state.location.hash = `#offer=${sd.jsonB64({ issuer: state.issuer.did, id: offerId, token })}`;
   await state.start();
-  await until(() => state.app.textContent.includes('Ausgabecode prüfen & Wallet verbinden'));
+  await until(() => state.app.textContent.includes('Ausgabecode prüfen & Ausweis empfangen'));
   const code = find(state.app, (node) => node.attributes.name === 'transactionCode');
   code.value = '123456';
   await submit(state.app);
   assert.match(state.app.textContent, /Dein Mitarbeiterausweis ist bereit/);
   assert.equal(claimed, true);
+  assert.doesNotMatch(state.app.textContent, /jetzt signieren|auf deinem Rechner weiter/);
   assert.equal(state.requests.filter((route) => route === statusUri).length, 1);
   const accept = button(state.app, 'Ausweis in Wallet speichern');
   state.statusResponse = () => { throw new Error('offline'); };
@@ -636,4 +689,197 @@ test('Offer code, receipt and acceptance stay functional while requiring fresh s
   assert.equal(acknowledged, true);
   assert.equal(state.location.hash, '');
   await until(() => state.app.textContent.includes('Aktiv'));
+});
+
+test('Hosted issuance rejects incorrect codes, signs automatically and waits only on the phone without leaking the laptop code', async (t) => {
+  const state = await fixture(t);
+  const offer = offerFixture(state);
+  state.location.hash = offer.fragment;
+  await state.start();
+  await until(() => button(state.app, 'Ausgabecode prüfen & Ausweis empfangen'));
+  assert.doesNotMatch(state.app.textContent, /123456|jetzt signieren/);
+  const originalKeys = state.read().privateJwk;
+  const input = find(state.app, (node) => node.attributes.name === 'transactionCode');
+  input.value = '12';
+  await submit(state.app);
+  assert.match(state.app.textContent, /sechsstelligen Ausgabecode/);
+  assert.equal(offer.calls.claim, 0);
+  input.value = '654321';
+  await submit(state.app);
+  assert.match(state.app.textContent, /Ausgabecode stimmt nicht/);
+  assert.equal(offer.calls.credential, 0);
+  let release;
+  offer.afterClaim = new Promise((resolve) => { release = resolve; });
+  input.value = '123456';
+  const connecting = submit(state.app);
+  await until(() => state.app.textContent.includes('Dein Ausweis wird automatisch signiert'));
+  assert.match(state.app.textContent, /Bleibe auf diesem Handy|Am Notebook ist keine weitere Aktion/);
+  assert.doesNotMatch(state.app.textContent, /jetzt signieren|auf deinem Rechner weiter/);
+  release();
+  await connecting;
+  assert.equal(offer.calls.credential, 1);
+  assert.match(state.app.textContent, /Dein Mitarbeiterausweis ist bereit/);
+  await button(state.app, 'Ausweis in Wallet speichern').listeners.get('click')();
+  assert.equal(offer.calls.ack, 1);
+  assert.equal(state.read().credentials.length, 2);
+  assert.deepEqual(state.read().privateJwk, originalKeys);
+  const claims = sd.describeCredential(state.read().credentials[1].sdjwt).claims;
+  assert.equal(claims.organisation, 'Demo-Issuer');
+  assert.equal(claims.role, 'Gast');
+  assert.equal(state.location.hash, '');
+});
+
+test('Pre-wallet scanner and deliberate QR paste preserve an offer through one-time onboarding and then start automatic issuance', async (t) => {
+  const state = await fixture(t);
+  state.storage.delete('wallet');
+  const offer = offerFixture(state);
+  await state.start();
+  await until(() => button(state.app, 'Wallet auf diesem Handy erstellen'));
+  assert.ok(button(state.app, 'QR-Code scannen'));
+  assert.equal(state.requests.length, 0);
+  const link = find(state.app, (node) => node.attributes.name === 'link');
+  link.value = `${issuerUrl}/wallet.html${offer.fragment}`;
+  await submit(state.app);
+  assert.match(state.app.textContent, /Dein Ausstellungsangebot ist geöffnet/);
+  assert.equal(state.location.hash, offer.fragment);
+  assert.equal(state.storage.has('wallet'), false);
+  assert.equal(offer.calls.claim, 0);
+  await button(state.app, 'Wallet auf diesem Handy erstellen').listeners.get('click')();
+  assert.notEqual(state.read().did, state.wallet.did);
+  assert.equal(state.location.hash, offer.fragment);
+  assert.equal(state.read().credentials.length, 0);
+  assert.match(state.app.textContent, /Ausgabecode prüfen & Ausweis empfangen/);
+  find(state.app, (node) => node.attributes.name === 'transactionCode').value = '123456';
+  await submit(state.app);
+  assert.match(state.app.textContent, /Dein Mitarbeiterausweis ist bereit/);
+  await button(state.app, 'Ausweis in Wallet speichern').listeners.get('click')();
+  assert.equal(state.read().credentials.length, 1);
+  assert.equal(offer.calls.ack, 1);
+  assert.match(state.app.textContent, /Meine Ausweise/);
+  assert.ok(button(state.app, 'QR-Code scannen'));
+});
+
+test('Inventory camera request is explicit; cancel/pagehide/hidden/navigating during permission prompt stop late streams', async (t) => {
+  const state = await fixture(t);
+  let resolvePermission;
+  let acquisitions = 0;
+  navigator.mediaDevices = {
+    getUserMedia: () => { acquisitions++; return new Promise((resolve) => { resolvePermission = resolve; }); },
+  };
+  await state.start();
+  await until(() => state.app.textContent.includes('Aktiv'));
+  assert.equal(acquisitions, 0);
+  for (const exit of [
+    () => button(state.app, 'Scannen abbrechen').listeners.get('click')(),
+    () => state.browserEvents.get('pagehide')(),
+    () => { document.hidden = true; state.documentEvents.get('visibilitychange')(); },
+    () => { state.browserEvents.get('storage')({ key: 'wallet' }); },
+  ]) {
+    const opening = button(state.app, 'QR-Code scannen').listeners.get('click')();
+    assert.match(state.app.textContent, /Kamera wird geöffnet/);
+    await exit();
+    const tracks = [{ stops: 0, stop() { this.stops++; } }, { stops: 0, stop() { this.stops++; } }];
+    resolvePermission({ getTracks: () => tracks });
+    await opening;
+    assert.ok(tracks.every((track) => track.stops === 1));
+    if (document.hidden) {
+      document.hidden = false;
+      state.documentEvents.get('visibilitychange')();
+    } else state.browserEvents.get('pageshow')({ persisted: true });
+    await until(() => state.app.textContent.includes('Aktiv'));
+    assert.match(state.app.textContent, /Meine Ausweise/);
+    assert.doesNotMatch(state.app.textContent, /Kamera wird geöffnet|Welche Angaben möchtest du teilen/);
+  }
+  assert.equal(acquisitions, 4);
+  assert.deepEqual(state.read().privateJwk, state.wallet.privateJwk);
+});
+
+test('Pre-wallet camera denial shows a retry/cancel path without creating keys or losing an opened offer', async (t) => {
+  const state = await fixture(t);
+  state.storage.delete('wallet');
+  const offer = offerFixture(state);
+  state.location.hash = offer.fragment;
+  let acquisitions = 0;
+  navigator.mediaDevices = {
+    getUserMedia: async () => {
+      acquisitions++;
+      throw Object.assign(new Error('permission denied'), { name: 'NotAllowedError' });
+    },
+  };
+  await state.start();
+  await until(() => button(state.app, 'QR-Code scannen'));
+  assert.equal(acquisitions, 0);
+  await button(state.app, 'QR-Code scannen').listeners.get('click')();
+  assert.match(state.app.textContent, /Kamerazugriff nicht erlaubt/);
+  const retry = button(state.app, 'Kamera erneut versuchen');
+  assert.equal(retry.hidden, false);
+  assert.ok(button(state.app, 'Scannen abbrechen'));
+  await retry.listeners.get('click')();
+  assert.equal(acquisitions, 2);
+  assert.match(state.app.textContent, /Kamerazugriff nicht erlaubt/);
+  await button(state.app, 'Scannen abbrechen').listeners.get('click')();
+  assert.match(state.app.textContent, /Dein Ausstellungsangebot ist geöffnet/);
+  assert.equal(state.location.hash, offer.fragment);
+  assert.equal(state.storage.has('wallet'), false);
+  assert.equal(offer.calls.claim, 0);
+});
+
+test('Pasted external QR is rejected visibly; a valid request is explicit and restoration never reopens it', async (t) => {
+  const state = await fixture(t);
+  const request = requestFixture(state);
+  await state.start();
+  await until(() => state.app.textContent.includes('Aktiv'));
+  const input = find(state.app, (node) => node.attributes.name === 'link');
+  input.value = `https://external.example.org/wallet.html#req=${request.id}`;
+  await submit(state.app);
+  assert.match(state.app.textContent, /dieser Workshop-Zentrale/);
+  assert.equal(state.location.hash, '');
+  assert.equal(state.requests.filter((route) => route.includes('/requests/')).length, 0);
+  input.value = `${issuerUrl}/wallet.html#req=${request.id}`;
+  await submit(state.app);
+  assert.match(state.app.textContent, /Welche Angaben möchtest du teilen/);
+  assert.equal(state.location.hash, '');
+  state.browserEvents.get('pageshow')({ persisted: true });
+  await until(() => state.app.textContent.includes('Meine Ausweise') && state.app.textContent.includes('Aktiv'));
+  assert.doesNotMatch(state.app.textContent, /Welche Angaben möchtest du teilen/);
+});
+
+test('Two organisations on one origin use separate DID-authenticated lists, group per organisation and reject crossed list references', async (t) => {
+  const state = await fixture(t);
+  const id = crypto.randomUUID();
+  const second = { ...await sd.generateKeyPair(), statusListUrl: `${issuerUrl}/api/status-lists/${id}` };
+  const metadata = {
+    id, did: second.did, name: 'Zweite Organisation', publicUrl: issuerUrl,
+    statusListUrl: second.statusListUrl, state: 'approved', proofVerified: true, trusted: true,
+  };
+  state.issuers.push(metadata);
+  for (const [credentialId, index, uri] of [
+    ['second-org', 0, second.statusListUrl], ['same-org', 1, second.statusListUrl], ['crossed-list', 2, statusUri],
+  ]) {
+    state.wallet.credentials.push({
+      id: credentialId, issuerName: metadata.name, receivedAt: Date.now(),
+      sdjwt: await sd.issueSdJwt({
+        issuerDid: second.did, issuerPrivateJwk: second.privateJwk, holderPublicJwk: state.wallet.publicJwk,
+        vct: EMPLOYEE_VCT, claims: { given_name: 'Erika', family_name: 'Muster', organisation: metadata.name },
+        status: { status_list: { idx: index, uri } },
+      }),
+    });
+  }
+  state.storage.set('wallet', JSON.stringify(state.wallet));
+  state.handler = (route) => {
+    assert.equal(route, second.statusListUrl);
+    return signedList(second, [0]);
+  };
+  await state.start();
+  await until(() => badge(card(state.app, 'second-org'))?.textContent === 'Widerrufen'
+    && badge(card(state.app, 'same-org'))?.textContent === 'Aktiv'
+    && card(state.app, 'crossed-list')?.textContent.includes('Statusreferenz'));
+  assert.equal(badge(card(state.app, 'employee-card')).textContent, 'Aktiv');
+  assert.equal(state.requests.filter((route) => route === statusUri).length, 1);
+  assert.equal(state.requests.filter((route) => route === second.statusListUrl).length, 1);
+  state.handler = () => signedList(state.issuer, [], { sub: second.statusListUrl });
+  await state.poll();
+  assert.equal(badge(card(state.app, 'same-org')).textContent, 'Status nicht prüfbar');
+  assert.equal(badge(card(state.app, 'employee-card')).textContent, 'Aktiv');
+  assert.doesNotMatch(state.app.textContent, /Welche Angaben möchtest du teilen/);
 });

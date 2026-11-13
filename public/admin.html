@@ -16,45 +16,45 @@
     <nav aria-label="Hauptnavigation"><a href="/kiosk.html">Empfang</a><a href="/wallet.html">Wallet</a></nav>
   </header>
   <main class="shell admin-shell">
-    <h1>Workshop-Verwaltung</h1>
+    <h1>Host-Verwaltung</h1>
     <div id="error" class="message error" role="alert" hidden></div>
     <div id="notice" class="message notice" role="status" hidden></div>
     <p class="message warning">Nur Demo-Daten verwenden. Den privaten Freischalt-Link und Admin-Token nicht an Teilnehmende weitergeben; den Tunnel nach dem Workshop beenden.</p>
     <div id="admin-content" class="stack" hidden>
     <section class="card">
-      <h2>Die Vertrauensliste im Workshop</h2>
+      <h2>Organisationen zentral freigeben</h2>
       <ol class="guided-list">
-        <li><strong>Anmelden:</strong> Mitarbeitende hosten ihren eigenen Issuer und beweisen den Besitz des Ausstellerschlüssels.</li>
-        <li><strong>Zuordnen:</strong> Vergleiche den Fingerabdruck mit dem Bildschirm der Person und trage ihren Namen ein. Ein selbst gewählter Issuer-Name beweist keine Identität.</li>
-        <li><strong>Issuer im Setup als vertrauenswürdig kennzeichnen:</strong> Der Empfang akzeptiert diesen konkreten Schlüssel, keine beliebige Cloudflare-Domain.</li>
-        <li><strong>Danach ausstellen und einchecken:</strong> Die ausstellende Person erstellt selbstständig Ausweise. Einzelne Credentials werden hier weder registriert noch freigegeben; beim Vorzeigen prüft der Empfang seine aktuelle Vertrauensregel.</li>
+        <li><strong>Am Laptop registrieren:</strong> Teilnehmende öffnen die öffentliche Organisationseinrichtung. Der Server erstellt einen eigenen dauerhaften Signaturschlüssel; der Organisationsname ist danach unveränderlich. Neue Organisationen warten auf Freigabe.</li>
+        <li><strong>Organisation prüfen:</strong> Vergleiche Organisationsname, öffentliche DID und Fingerabdruck mit dem Organisationsbildschirm am Laptop. Ein frei gewählter Name beweist keine Identität.</li>
+        <li><strong>Als Host freigeben:</strong> Der Empfang vertraut dem konkreten Organisationsschlüssel. Alle Organisationen nutzen dieselbe öffentliche Adresse, aber unterschiedliche DIDs. Der Admin-Token bleibt ausschließlich beim Host.</li>
+        <li><strong>Danach ausstellen und einchecken:</strong> Die Organisation stellt Ausweise für Wallet-Inhaber aus. Ein Mitarbeiterausweis bindet Organisation und Inhaber, nicht die Bedienung am Laptop. Einzelne Credentials werden hier nicht freigegeben. Eine Organisationssperre ist kein einzelner Ausweiswiderruf; historische Check-ins bleiben unverändert.</li>
       </ol>
       <div class="progress-stats" aria-live="polite">
-        <div><strong id="registered-count">–</strong><span>Registrierte Issuer</span></div>
+        <div><strong id="registered-count">–</strong><span>Registrierte Organisationen</span></div>
         <div><strong id="checkin-count">–</strong><span>Erfolgreiche Check-ins</span></div>
       </div>
       <div data-explain="trust"></div>
     </section>
     <section class="card">
-      <div class="card-top"><h2>Registrierte Issuer</h2><button id="refresh" type="button" class="secondary">Aktualisieren</button></div>
-      <p>Registrierung allein bedeutet kein Vertrauen. Klappe einen Issuer auf, prüfe seinen Schlüsselbeweis und bestätige die Zuordnung zur Person. Einzelne Ausweise werden hier nicht freigegeben.</p>
+      <div class="card-top"><h2>Registrierte Organisationen</h2><button id="refresh" type="button" class="secondary">Aktualisieren</button></div>
+      <p>Registrierung allein bedeutet kein Vertrauen. Klappe eine Organisation auf, prüfe ihren festen Namen und Schlüssel und entscheide über die Freigabe. Unter den Details kannst du bei Bedarf einen privaten Wiederherstellungslink für ihren Browserzugang erstellen.</p>
       <div class="issuer-tools">
-        <label class="field grow" for="issuer-search">Issuer suchen
+        <label class="field grow" for="issuer-search">Organisation suchen
           <input id="issuer-search" type="search" placeholder="Name, DID oder Fingerabdruck" autocomplete="off" aria-controls="issuers">
         </label>
         <label class="field" for="issuer-filter">Vertrauensstatus
           <select id="issuer-filter" aria-controls="issuers">
             <option value="all">Alle Zustände</option>
-            <option value="untrusted">Registriert · nicht vertraut</option>
-            <option value="trusted">Vertrauenswürdig</option>
-            <option value="unverified">Schlüsselbeweis fehlt</option>
+            <option value="pending">Ausstehend</option>
+            <option value="approved">Freigegeben</option>
+            <option value="suspended">Gesperrt</option>
           </select>
         </label>
       </div>
-      <p class="muted list-hint">Neue Registrierungen erscheinen oben. Suche und Filter bleiben beim Aktualisieren erhalten, ebenso Eingaben und geöffnete Details.</p>
-      <div id="issuers" class="issuer-directory" role="region" aria-label="Registrierte Issuer" tabindex="0"></div>
-      <p id="empty" class="muted" hidden>Noch keine Issuer registriert.</p>
-      <p id="issuer-no-match" class="muted" hidden>Keine passenden Issuer. Suche oder Filter ändern.</p>
+      <p class="muted list-hint">Registrierte Organisationen umfassen auch ausstehende und gesperrte Einträge. Jeder erfolgreiche Besuch zählt als Check-in, auch wiederholte Besuche. Neue Registrierungen erscheinen oben. Suche, Filter und geöffnete Details bleiben bei Live-Updates erhalten.</p>
+      <div id="issuers" class="issuer-directory" role="region" aria-label="Registrierte Organisationen" tabindex="0"></div>
+      <p id="empty" class="muted" hidden>Noch keine Organisationen registriert.</p>
+      <p id="issuer-no-match" class="muted" hidden>Keine passenden Organisationen. Suche oder Filter ändern.</p>
     </section>
     <section class="card">
       <h2>Replay-Schutz testen</h2>
@@ -65,7 +65,7 @@
     </section>
     <section class="card">
       <h2>Für die nächste Runde</h2>
-      <p>Leert alle Check-ins und laufenden Anfragen. Die registrierten Issuer bleiben erhalten.</p>
+      <p>Leert alle Check-ins und laufenden Anfragen. Die registrierten Organisationen und ihre Freigaben bleiben erhalten.</p>
       <button id="reset" type="button" class="secondary danger">Check-in-Liste leeren</button>
     </section>
     </div>

@@ -1,213 +1,118 @@
-import express from 'express';
-import QRCode from 'qrcode';
-import { createHash, randomBytes, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
-import { chmod, mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import * as sd from '../public/lib/sdjwt.js';
-import { managementAuth } from './management-auth.js';
-import { createCredentialStore } from './credential-store.js';
+import { randomBytes, randomInt, randomUUID } from 'node:crypto';
 import { deflateSync } from 'node:zlib';
-import { STATUS_LIST_TTL } from '../public/lib/credential-status.js';
-import {
-  EMPLOYEE_VCT, REGISTRATION_PROOF, HOLDER_PROOF, publicOrigin, validatePublicJwk, signProof, verifyProof,
-} from '../public/lib/protocol.js';
+import QRCode from 'qrcode';
+import * as sd from '../public/lib/sdjwt.js';
+import { EMPLOYEE_VCT, HOLDER_PROOF, ROLES, validatePublicJwk, verifyProof } from '../public/lib/protocol.js';
+import { STATUS_LIST_ENTRIES, STATUS_LIST_TTL } from '../public/lib/credential-status.js';
+import { HttpError, bodyFields, text, wrap, secretHash, matchesSecret } from './http.js';
 
-const publicDirectory = fileURLToPath(new URL('../public/', import.meta.url));
-const lifetime = 10 * 60 * 1000;
-const wrap = (handler) => (req, res, next) => Promise.resolve(handler(req, res)).catch(next);
+const COOKIE = 'eudi_org_access';
+const ACCESS_TTL = 30 * 24 * 60 * 60 * 1000;
+const RECOVERY_TTL = 10 * 60 * 1000;
+const OFFER_TTL = 10 * 60 * 1000;
+const secret = () => randomBytes(32).toString('base64url');
 
-class HttpError extends Error {
-  constructor(status, message) {
-    super(message);
-    this.status = status;
-  }
+export function publicOrganisation(org, publicUrl) {
+  return {
+    id: org.id, name: org.name, did: org.did, publicUrl,
+    statusListUrl: `${publicUrl}/api/status-lists/${org.id}`,
+    state: org.state, trusted: org.state === 'approved', proofVerified: true,
+    fingerprint: org.fingerprint, createdAt: org.createdAt, approvedAt: org.approvedAt,
+  };
 }
 
-function bodyFields(body, fields) {
-  if (!body || typeof body !== 'object' || Array.isArray(body)
-    || Object.keys(body).some((field) => !fields.includes(field))) {
-    throw new HttpError(400, 'Die übermittelten Daten haben ein ungültiges Format.');
-  }
-}
-
-function text(value, label) {
-  if (typeof value !== 'string' || !value.trim() || value.length > 120) {
-    throw new HttpError(400, `${label} fehlt oder ist zu lang (höchstens 120 Zeichen).`);
-  }
-  return value.trim();
-}
-
-function matchesSecret(value, expected) {
-  const digest = (input) => createHash('sha256').update(input).digest();
-  return typeof value === 'string' && timingSafeEqual(digest(value), digest(expected));
-}
-
-function registryMetadata(record) {
-  const result = {};
-  for (const key of ['did', 'name', 'employeeName', 'publicUrl', 'trusted', 'proofVerified', 'ownerName',
-    'fingerprint', 'createdAt', 'updatedAt', 'registeredAt']) {
-    if (['string', 'boolean'].includes(typeof record[key]) || record[key] === null) result[key] = record[key];
-  }
-  return result;
-}
-
-export async function createIssuerApp({
-  publicUrl,
-  workshopUrl,
-  dataDirectory,
-  clock = () => Date.now(),
-} = {}) {
-  publicUrl = publicOrigin(publicUrl, 'Issuer-Adresse');
-  workshopUrl = publicOrigin(workshopUrl, 'Workshop-Adresse');
-  if (publicUrl === workshopUrl) throw new Error('Issuer und Workshop brauchen getrennte Adressen.');
-  if (typeof dataDirectory !== 'string' || !dataDirectory) throw new Error('Das Issuer-Datenverzeichnis fehlt.');
-  await mkdir(dataDirectory, { recursive: true, mode: 0o700 });
-  const identityFile = path.join(dataDirectory, 'identity.json');
-  let identity = null;
-  try {
-    identity = JSON.parse(await readFile(identityFile, 'utf8'));
-    await validatePublicJwk(identity.publicJwk);
-    if (sd.didFromJwk(identity.publicJwk) !== identity.did
-      || identity.privateJwk?.d === undefined
-      || (identity.credentialStoreVersion !== undefined && identity.credentialStoreVersion !== 1)
-      || JSON.stringify(sd.publicPart(identity.privateJwk)) !== JSON.stringify(sd.publicPart(identity.publicJwk))) {
-      throw new Error('Ungültige Issuer-Schlüssel.');
-    }
-    text(identity.name, 'Name der Ausweisstelle');
-    text(identity.employeeName, 'Name der ausstellenden Person');
-    const probe = await sd.signJwt({ alg: 'ES256' }, { test: true }, identity.privateJwk);
-    await sd.verifyJwt(probe, identity.publicJwk);
-    await chmod(identityFile, 0o600);
-  } catch (error) {
-    if (error.code !== 'ENOENT') throw new Error('Die gespeicherte Issuer-Identität konnte nicht sicher geladen werden.', { cause: error });
-  }
-
-  async function saveIdentity(next) {
-    const temporary = path.join(dataDirectory, `.identity-${randomUUID()}.json`);
-    let handle;
+export async function installIssuerRoutes(app, { store, publicUrl, clock }) {
+  for (const org of store.listIssuers()) {
     try {
-      handle = await open(temporary, 'wx', 0o600);
-      await handle.writeFile(JSON.stringify(next, null, 2), 'utf8');
-      await handle.sync();
-      await handle.close();
-      handle = null;
-      await chmod(temporary, 0o600);
-      await rename(temporary, identityFile);
-      identity = next;
-    } finally {
-      if (handle) await handle.close();
-      await unlink(temporary).catch((error) => { if (error.code !== 'ENOENT') throw error; });
+      await validatePublicJwk(org.publicJwk);
+      const probe = await sd.signJwt({ alg: 'ES256' }, { test: true }, org.privateJwk);
+      await sd.verifyJwt(probe, org.publicJwk);
+      if (await sd.sha256b64(org.did) !== org.fingerprint) throw new Error('Der Organisationsfingerabdruck ist beschädigt.');
+      for (const record of org.credentials) {
+        const key = await validatePublicJwk(sd.jwkFromDid(record.holderDid));
+        if (sd.didFromJwk(key) !== record.holderDid) throw new Error('Die gespeicherte Wallet-DID ist nicht kanonisch.');
+      }
+      for (const offer of org.offers.filter((item) => item.sdjwt)) {
+        const { jwt } = sd.parseSdJwt(offer.sdjwt);
+        const { payload } = await sd.verifyJwt(jwt, org.publicJwk);
+        const record = org.credentials.find((entry) => entry.id === offer.credentialId);
+        if (await sd.sha256b64(jwt) !== record.id || payload.iss !== org.did
+          || sd.didFromJwk(payload.cnf.jwk) !== record.holderDid
+          || JSON.stringify(sd.describeCredential(offer.sdjwt).claims) !== JSON.stringify(record.claims)
+          || payload.status?.status_list?.idx !== record.statusIndex
+          || payload.status?.status_list?.uri !== `${offer.publicUrl}/api/status-lists/${org.id}`) {
+          throw new Error('Der gespeicherte Ausstellungsbeleg passt nicht zum Credential-Protokoll.');
+        }
+      }
+    } catch (error) {
+      throw new Error('Die gespeicherten Organisationsschlüssel oder Ausstellungsbelege sind beschädigt.', { cause: error });
     }
   }
-
-  const credentials = await createCredentialStore(dataDirectory, identity?.did, {
-    required: identity?.credentialStoreVersion === 1,
-  });
-  if (identity && identity.credentialStoreVersion !== 1) {
-    await saveIdentity({ ...identity, credentialStoreVersion: 1 });
-  }
-
   let mutation = Promise.resolve();
   function serialize(work) {
     const result = mutation.then(work);
     mutation = result.catch(() => {});
     return result;
   }
-
-  async function workshop(route, body) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-    try {
-      const response = await fetch(`${workshopUrl}/api${route}`, {
-        method: body === undefined ? 'GET' : 'POST',
-        headers: { Accept: 'application/json', ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-        redirect: 'error',
-        signal: controller.signal,
-      });
-      const result = await response.json();
-      if (!response.ok) {
-        throw new HttpError(502, `Die Workshop-Zentrale hat die Anfrage abgelehnt: ${
-          typeof result?.error === 'string' ? result.error.slice(0, 300) : 'Bitte erneut versuchen.'}`);
-      }
-      return result;
-    } catch (error) {
-      if (error instanceof HttpError) throw error;
-      throw new HttpError(502, controller.signal.aborted
-        ? 'Die Workshop-Zentrale antwortet nicht rechtzeitig (10 Sekunden).'
-        : 'Die Workshop-Zentrale ist nicht erreichbar oder hat keine gültige Antwort gesendet.');
-    } finally {
-      clearTimeout(timeout);
-    }
+  const metadata = (org) => publicOrganisation(org, publicUrl);
+  const session = (org) => ({ organisation: org ? metadata(org) : null, roles: ROLES });
+  function cookieSecret(req) {
+    const values = (req.get('Cookie') || '').split(';').map((part) => part.trim())
+      .filter((part) => part.startsWith(`${COOKIE}=`));
+    if (!values.length) return null;
+    if (values.length !== 1) throw new HttpError(401, 'Der Browser-Zugang ist ungültig. Bitte wende dich an die Moderation.');
+    const value = values[0].slice(COOKIE.length + 1);
+    if (!/^[A-Za-z0-9_-]{43}$/.test(value)) throw new HttpError(401, 'Der Browser-Zugang ist ungültig. Bitte wende dich an die Moderation.');
+    return value;
   }
-
-  function requireIdentity() {
-    if (!identity) throw new HttpError(409, 'Bitte lege zuerst die Identität deiner Ausweisstelle an.');
-    return identity;
+  function owner(req, required = true) {
+    const value = cookieSecret(req);
+    const org = value && store.listIssuers().find((item) => matchesSecret(value, item.accessHash)
+      && item.accessExpires > clock());
+    if (!org && required) throw new HttpError(401, 'Der Organisationszugang fehlt oder ist abgelaufen. Nur die Moderation kann den Browser-Zugang wiederherstellen.');
+    return org || null;
   }
-
-  function currentRecord(record, issuer = identity) {
-    return issuer && record && record.did === issuer.did && record.publicUrl === publicUrl
-      && record.name === issuer.name && record.employeeName === issuer.employeeName;
+  function setCookie(res, value) {
+    res.cookie(COOKIE, value, {
+      httpOnly: true, secure: publicUrl.startsWith('https:'), sameSite: 'strict', path: '/',
+      maxAge: ACCESS_TTL,
+    });
   }
-
-  async function lookupRegistration(issuer) {
-    const records = await workshop('/issuers');
-    if (!Array.isArray(records)) throw new HttpError(502, 'Die Workshop-Zentrale hat keine gültige Vertrauensliste gesendet.');
-    const record = records.find((item) => currentRecord(item, issuer));
-    return record ? registryMetadata(record) : null;
+  function approved(org) {
+    if (org.state !== 'approved') throw new HttpError(409, 'Die Moderation muss diese Organisation zuerst freigeben. Eine gesperrte Organisation kann keine Ausweise ausstellen.');
   }
-
-  const offers = new Map();
-  const expired = new Map();
-  function cleanOffers() {
-    for (const [id, offer] of offers) {
-      if (clock() >= offer.expires) {
-        expired.set(id, offer.token);
-        offers.delete(id);
-      }
-    }
-    while (expired.size > 1000) expired.delete(expired.keys().next().value);
-  }
-
   function live(offer) {
+    if (offer.publicUrl !== publicUrl) throw new HttpError(410, 'Die Workshop-Adresse hat sich geändert. Bitte erstelle einen neuen QR-Code und einen neuen Ausweis.');
     if (clock() >= offer.expires) throw new HttpError(410, 'Das Angebot ist abgelaufen. Bitte erstelle einen neuen QR-Code.');
     if (offer.status === 'cancelled') throw new HttpError(410, offer.cancellationReason || 'Das Angebot wurde abgebrochen.');
   }
-
-  function findOffer(id, token, admin = false) {
-    cleanOffers();
-    const offer = offers.get(id);
-    const expected = offer?.token || expired.get(id);
-    if (!expected) throw new HttpError(404, 'Das Angebot wurde nicht gefunden. Bitte scanne einen aktuellen QR-Code.');
-    if (!admin && !matchesSecret(token, expected)) throw new HttpError(401, 'Der Zugangscode des Angebots fehlt oder ist ungültig.');
-    if (!offer) throw new HttpError(410, 'Das Angebot ist abgelaufen. Bitte erstelle einen neuen QR-Code.');
-    if (!admin) live(offer);
-    return offer;
+  function findOffer(id, token, orgId) {
+    const org = orgId ? store.getOrganisation(orgId) : store.listIssuers().find((item) => item.offers.some((offer) => offer.id === id));
+    const offer = org?.offers.find((item) => item.id === id);
+    if (!offer) throw new HttpError(404, 'Das Angebot wurde nicht gefunden. Bitte scanne einen aktuellen QR-Code.');
+    if (!orgId && !matchesSecret(token, offer.tokenHash)) throw new HttpError(401, 'Der Zugangscode des Angebots fehlt oder ist ungültig.');
+    return { org, offer };
   }
-
-  function offerMetadata(offer, admin = false) {
+  function offerMetadata(org, offer, privateView = false) {
     return {
-      id: offer.id, status: offer.status, issuerDid: offer.issuerDid, issuerName: offer.issuerName,
-      employeeName: offer.employeeName, claims: offer.claims, nonce: offer.nonce,
-      aud: publicUrl, expiresAt: new Date(offer.expires).toISOString(),
-      ...(admin && offer.status === 'offered' ? { transactionCode: offer.transactionCode } : {}),
+      id: offer.id, status: clock() >= offer.expires || offer.publicUrl !== publicUrl ? 'expired' : offer.status,
+      issuerDid: org.did, issuerName: org.name, claims: offer.claims, nonce: offer.nonce,
+      aud: offer.publicUrl, expiresAt: new Date(offer.expires).toISOString(),
+      ...(privateView && offer.status === 'offered' && clock() < offer.expires && offer.publicUrl === publicUrl ? { transactionCode: offer.transactionCode } : {}),
+      ...(privateView ? { holderDid: offer.holderDid || null } : {}),
       ...(offer.cancellationReason ? { cancellationReason: offer.cancellationReason } : {}),
-      ...(admin ? { holderDid: offer.holderDid || null } : {}),
     };
   }
-
-  async function holderProof(offer, body, fields = ['proof']) {
+  async function holderProof(offer, org, body, fields = ['proof']) {
     bodyFields(body, fields);
     try {
       if (typeof body.proof !== 'string' || body.proof.length > 10000) throw new Error();
       const { payload } = sd.decodeJwt(body.proof);
       const jwk = await validatePublicJwk(payload.jwk);
       const did = sd.didFromJwk(jwk);
-      if (did === offer.issuerDid) throw new Error();
+      if (did === org.did) throw new Error();
       await verifyProof(body.proof, {
-        type: HOLDER_PROOF, publicJwk: jwk, audience: publicUrl, nonce: offer.nonce, issuer: did,
+        type: HOLDER_PROOF, publicJwk: jwk, audience: offer.publicUrl, nonce: offer.nonce, issuer: did,
       });
       live(offer);
       return { did, jwk };
@@ -216,255 +121,207 @@ export async function createIssuerApp({
       throw new HttpError(400, 'Der Wallet-Schlüsselbeweis ist ungültig oder abgelaufen. Bitte scanne den QR-Code erneut.');
     }
   }
-
-  const app = express();
-  app.disable('x-powered-by');
-  app.use((req, res, next) => {
-    res.set({
-      'X-Content-Type-Options': 'nosniff',
-      'Referrer-Policy': 'no-referrer',
-      'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; worker-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
-    });
-    next();
-  });
-  app.use('/api', (req, res, next) => {
-    res.set('Cache-Control', 'no-store');
-    next();
-  });
-  app.use(['/api/offers', '/api/status-list'], (req, res, next) => {
-    res.vary('Origin');
-    if (req.get('Origin') === workshopUrl) {
-      res.set({
-        'Access-Control-Allow-Origin': workshopUrl,
-        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, X-Offer-Token',
-      });
+  async function signedStatus(org) {
+    const bytes = new Uint8Array(STATUS_LIST_ENTRIES / 8);
+    for (const record of org.credentials) {
+      if (record.revokedAt) bytes[Math.floor(record.statusIndex / 8)] |= 1 << (record.statusIndex % 8);
     }
-    if (req.method === 'OPTIONS') return res.sendStatus(204);
+    const iat = Math.floor(clock() / 1000);
+    return sd.signJwt({ alg: 'ES256', typ: 'statuslist+jwt', kid: `${org.did}#0` }, {
+      iss: org.did, sub: `${publicUrl}/api/status-lists/${org.id}`,
+      iat, exp: iat + STATUS_LIST_TTL, ttl: STATUS_LIST_TTL,
+      status_list: { bits: 1, lst: sd.b64url(deflateSync(bytes)) },
+    }, org.privateJwk);
+  }
+
+  app.get(['/api/issuer/session', '/api/issuer/status'], (req, res) => res.json(session(owner(req, false))));
+  app.post('/api/organisations', wrap(async (req, res) => {
+    bodyFields(req.body, ['name']);
+    const name = text(req.body.name, 'Organisationsname');
+    if (cookieSecret(req)) throw new HttpError(409, 'Dieser Browser ist bereits einer Organisation zugeordnet. Bitte nutze den bestehenden Zugang oder wende dich an die Moderation.');
+    const pair = await sd.generateKeyPair();
+    const access = secret();
+    const org = {
+      id: randomUUID(), name, ...pair, state: 'pending', createdAt: new Date(clock()).toISOString(),
+      approvedAt: null, fingerprint: await sd.sha256b64(pair.did),
+      accessHash: secretHash(access), accessExpires: clock() + ACCESS_TTL,
+      recovery: null, credentials: [], offers: [],
+    };
+    store.addOrganisation(org);
+    setCookie(res, access);
+    res.status(201).json(session(org));
+  }));
+  app.post('/api/admin/organisations/:id/recovery', (req, res) => {
+    bodyFields(req.body, []);
+    const org = store.getOrganisation(req.params.id);
+    if (!org) throw new HttpError(404, 'Diese Organisation wurde nicht gefunden.');
+    const token = secret();
+    const expires = clock() + RECOVERY_TTL;
+    store.updateOrganisation(org.id, (current) => { current.recovery = { hash: secretHash(token), expires }; });
+    res.json({ url: `${publicUrl}/issuer.html#org-access=${token}`, expiresAt: new Date(expires).toISOString() });
+  });
+  app.post('/api/issuer/recover', (req, res) => {
+    bodyFields(req.body, ['token']);
+    if (typeof req.body.token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(req.body.token)) {
+      throw new HttpError(400, 'Der Wiederherstellungslink ist ungültig.');
+    }
+    const org = store.listIssuers().find((item) => item.recovery && matchesSecret(req.body.token, item.recovery.hash));
+    if (!org || org.recovery.expires <= clock()) throw new HttpError(410, 'Der Wiederherstellungslink ist abgelaufen oder wurde bereits verwendet. Bitte wende dich an die Moderation.');
+    const existing = owner(req, false);
+    if (existing && existing.id !== org.id) throw new HttpError(409, 'Dieser Browser gehört zu einer anderen Organisation. Bitte öffne den Wiederherstellungslink in einem getrennten Browserprofil.');
+    const access = secret();
+    const updated = store.updateOrganisation(org.id, (current) => {
+      current.accessHash = secretHash(access);
+      current.accessExpires = clock() + ACCESS_TTL;
+      current.recovery = null;
+    });
+    setCookie(res, access);
+    res.json(session(updated));
+  });
+  app.get('/api/status-lists/:id', wrap(async (req, res) => {
+    const org = store.getOrganisation(req.params.id);
+    if (!org) throw new HttpError(404, 'Diese Organisation wurde nicht gefunden.');
+    res.type('application/statuslist+jwt').send(await signedStatus(org));
+  }));
+
+  app.use('/api/issuer', (req, res, next) => {
+    req.organisationId = owner(req).id;
     next();
   });
-  app.use(express.json({ limit: '32kb', strict: true }));
-  app.get('/api/health', (req, res) => res.json({ ok: true, role: 'issuer' }));
-  app.get('/api/config', (req, res) => res.json({
-    role: 'issuer', publicUrl, workshopUrl, eventTitle: 'Meine Ausweisstelle',
-  }));
-  app.get('/api/status-list', wrap(async (req, res) => {
-    const issuer = requireIdentity();
-    const iat = Math.floor(clock() / 1000);
-    const token = await sd.signJwt({ alg: 'ES256', typ: 'statuslist+jwt', kid: `${issuer.did}#0` }, {
-      iss: issuer.did, sub: `${publicUrl}/api/status-list`, iat, exp: iat + STATUS_LIST_TTL, ttl: STATUS_LIST_TTL,
-      status_list: { bits: 1, lst: sd.b64url(deflateSync(credentials.statusBytes())) },
-    }, issuer.privateJwk);
-    res.type('application/statuslist+jwt').send(token);
-  }));
-  const status = () => ({
-    ...(identity ? { did: identity.did, name: identity.name, employeeName: identity.employeeName,
-      ...(identity.registration ? { registration: registryMetadata(identity.registration) } : {}) } : {}),
-    publicUrl, workshopUrl,
+  app.get('/api/issuer/credentials', (req, res) => res.json(owner(req).credentials));
+  app.post('/api/issuer/credentials/:id/revoke', (req, res) => {
+    bodyFields(req.body, []);
+    const org = owner(req);
+    const record = org.credentials.find((entry) => entry.id === req.params.id);
+    if (!record) throw new HttpError(404, 'Dieser Ausweis wurde nicht von dieser Organisation ausgestellt.');
+    const updated = store.updateOrganisation(org.id, (current) => {
+      const entry = current.credentials.find((item) => item.id === record.id);
+      entry.revokedAt ||= new Date(clock()).toISOString();
+    });
+    res.json(updated.credentials.find((entry) => entry.id === record.id));
   });
-  const adminToken = managementAuth(app, '/api/issuer');
-  app.get('/api/issuer/status', (req, res) => res.json(status()));
-  app.get('/api/issuer/credentials', (req, res) => res.json(credentials.list()));
-  app.post('/api/issuer/credentials/:id/revoke', wrap(async (req, res) => {
-    bodyFields(req.body, []);
-    if (!/^[A-Za-z0-9_-]{43}$/.test(req.params.id)) throw new HttpError(400, 'Die Credential-ID ist ungültig.');
-    const record = await serialize(() => credentials.revoke(req.params.id, new Date(clock()).toISOString()));
-    if (!record) throw new HttpError(404, 'Dieser Ausweis wurde nicht von diesem Issuer ausgestellt.');
-    res.json(record);
-  }));
-  app.post('/api/issuer/setup', wrap(async (req, res) => {
-    bodyFields(req.body, ['name', 'employeeName']);
-    const name = text(req.body.name, 'Name der Ausweisstelle');
-    const employeeName = text(req.body.employeeName, 'Name der ausstellenden Person');
-    await serialize(async () => {
-      const pair = identity || await sd.generateKeyPair();
-      const unchanged = identity?.name === name && identity?.employeeName === employeeName;
-      await saveIdentity({
-        did: pair.did, publicJwk: pair.publicJwk, privateJwk: pair.privateJwk, name, employeeName,
-        credentialStoreVersion: 1,
-        ...(unchanged && identity.registration ? { registration: identity.registration } : {}),
-      });
-    });
-    res.json(status());
-  }));
-  app.post('/api/issuer/register', wrap(async (req, res) => {
-    bodyFields(req.body, []);
-    const registration = await serialize(async () => {
-      const issuer = requireIdentity();
-      const challenge = await workshop('/issuers/challenge', {});
-      if (typeof challenge?.id !== 'string' || !challenge.id || typeof challenge.nonce !== 'string'
-        || !challenge.nonce || challenge.aud !== workshopUrl
-        || !Number.isFinite(Date.parse(challenge.expiresAt)) || Date.parse(challenge.expiresAt) <= clock()) {
-        throw new HttpError(502, 'Die Registrierungs-Challenge der Workshop-Zentrale ist ungültig oder abgelaufen.');
-      }
-      const proof = await signProof(REGISTRATION_PROOF, {
-        iss: issuer.did, aud: workshopUrl, nonce: challenge.nonce,
-        name: issuer.name, employeeName: issuer.employeeName, publicUrl,
-      }, issuer.privateJwk);
-      const record = await workshop('/issuers', { challengeId: challenge.id, proof });
-      if (!currentRecord(record, issuer) || typeof record.trusted !== 'boolean') {
-        throw new HttpError(502, 'Die Workshop-Zentrale hat eine unpassende Registrierung zurückgegeben.');
-      }
-      const safe = registryMetadata(record);
-      await saveIdentity({ ...issuer, registration: safe });
-      return safe;
-    });
-    res.json(registration);
-  }));
-  app.get('/api/issuer/trust', wrap(async (req, res) => {
-    const issuer = identity;
-    const registration = await lookupRegistration(issuer);
-    res.json(registration || { status: 'unregistered', ...(issuer ? { did: issuer.did } : {}), publicUrl });
-  }));
   app.post('/api/issuer/offers', wrap(async (req, res) => {
     bodyFields(req.body, ['claims']);
-    bodyFields(req.body.claims, ['given_name', 'family_name', 'organisation', 'role']);
+    bodyFields(req.body.claims, ['given_name', 'family_name', 'role']);
+    const org = owner(req);
+    approved(org);
     const claims = {
       given_name: text(req.body.claims.given_name, 'Vorname'),
       family_name: text(req.body.claims.family_name, 'Nachname'),
-      organisation: text(req.body.claims.organisation, 'Organisation'),
-      role: req.body.claims.role === undefined ? 'Mitarbeitende' : text(req.body.claims.role, 'Rolle'),
+      organisation: org.name, role: req.body.claims.role,
     };
-    const issuer = requireIdentity();
-    const registration = await lookupRegistration(issuer);
-    if (!registration || issuer !== identity) {
-      throw new HttpError(409, 'Bitte registriere die aktuellen Angaben deiner Ausweisstelle zuerst bei der Workshop-Zentrale.');
-    }
-    if (!registration.trusted || !registration.proofVerified || !registration.ownerName) {
-      throw new HttpError(409, 'Der Empfang muss deinen Issuer zuerst im Setup als vertrauenswürdig kennzeichnen. Danach kannst du Ausweise ausstellen.');
-    }
-    cleanOffers();
-    if (offers.size >= 1000) throw new HttpError(429, 'Es gibt zu viele offene Angebote. Bitte warte auf deren Ablauf.');
+    if (!ROLES.includes(claims.role)) throw new HttpError(400, 'Bitte wähle Mitarbeitende, Teamleitung oder Gast als Rolle.');
+    const token = secret();
+    const transactionCode = String(randomInt(1000000)).padStart(6, '0');
     const offer = {
-      id: randomUUID(), token: randomBytes(32).toString('base64url'),
-      transactionCode: String(randomInt(1000000)).padStart(6, '0'), codeAttempts: 0,
-      nonce: randomBytes(32).toString('base64url'), expires: clock() + lifetime, status: 'offered',
-      issuerDid: issuer.did, issuerName: issuer.name, employeeName: issuer.employeeName, claims,
+      id: randomUUID(), tokenHash: secretHash(token), codeHash: secretHash(transactionCode), transactionCode,
+      codeAttempts: 0, nonce: secret(), expires: clock() + OFFER_TTL, status: 'offered', claims, publicUrl,
     };
-    const url = `${workshopUrl}/wallet.html#offer=${sd.jsonB64({ issuer: issuer.did, id: offer.id, token: offer.token })}`;
+    const url = `${publicUrl}/wallet.html#offer=${sd.jsonB64({ issuer: org.did, id: offer.id, token })}`;
     const qrDataUrl = await QRCode.toDataURL(url, { width: 360, margin: 4 });
-    offers.set(offer.id, offer);
-    res.status(201).json({ ...offerMetadata(offer, true), url, qrDataUrl });
-  }));
-  app.get('/api/issuer/offers/:id', wrap(async (req, res) => {
-    res.json(offerMetadata(findOffer(req.params.id, null, true), true));
-  }));
-  app.post('/api/issuer/offers/:id/approve', wrap(async (req, res) => {
-    bodyFields(req.body, []);
-    const offer = findOffer(req.params.id, null, true);
-    live(offer);
-    if (offer.status !== 'bound' || offer.signing || !offer.holderJwk) {
-      throw new HttpError(409, 'Nur ein verbundenes, noch nicht signiertes Wallet-Angebot kann signiert werden.');
-    }
-    offer.signing = true;
-    try {
-      await serialize(async () => {
-        const registration = await lookupRegistration(requireIdentity());
-        live(offer);
-        if (!registration?.trusted || !registration.proofVerified || !registration.ownerName) {
-          throw new HttpError(409, 'Der Empfang vertraut diesem Issuer derzeit nicht. Bitte kläre das Issuer-Setup vor der Ausstellung.');
-        }
-        const statusIndex = credentials.allocateIndex();
-        const sdjwt = await sd.issueSdJwt({
-          issuerDid: offer.issuerDid, issuerPrivateJwk: requireIdentity().privateJwk,
-          holderPublicJwk: offer.holderJwk, vct: EMPLOYEE_VCT, claims: offer.claims, validDays: 1,
-          status: { status_list: { idx: statusIndex, uri: `${publicUrl}/api/status-list` } },
-        });
-        live(offer);
-        const { payload } = sd.describeCredential(sdjwt);
-        await credentials.add({
-          id: await sd.sha256b64(sd.parseSdJwt(sdjwt).jwt), issuerDid: offer.issuerDid,
-          holderDid: offer.holderDid, claims: offer.claims, statusIndex,
-          issuedAt: new Date(payload.iat * 1000).toISOString(),
-          expiresAt: new Date(payload.exp * 1000).toISOString(), revokedAt: null,
-        });
-        offer.sdjwt = sdjwt;
-        offer.status = 'issued';
-      });
-      res.json(offerMetadata(offer, true));
-    } finally {
-      offer.signing = false;
-    }
-  }));
-  app.post('/api/issuer/offers/:id/cancel', wrap(async (req, res) => {
-    bodyFields(req.body, []);
-    const offer = findOffer(req.params.id, null, true);
-    live(offer);
-    if (!['offered', 'bound'].includes(offer.status) || offer.signing) {
-      throw new HttpError(409, 'Ein bereits signiertes Angebot kann nicht abgebrochen werden.');
-    }
-    offer.status = 'cancelled';
-    res.json(offerMetadata(offer, true));
-  }));
-  app.get('/api/offers/:id', wrap(async (req, res) => {
-    res.json(offerMetadata(findOffer(req.params.id, req.get('X-Offer-Token'))));
-  }));
-  app.post('/api/offers/:id/claim', wrap(async (req, res) => {
-    const offer = findOffer(req.params.id, req.get('X-Offer-Token'));
-    const holder = await holderProof(offer, req.body, ['proof', 'transactionCode']);
-    if (offer.holderDid && offer.holderDid !== holder.did) {
-      throw new HttpError(409, 'Dieses Angebot ist bereits mit einer anderen Wallet verbunden.');
-    }
-    if (!offer.holderDid) {
-      if (typeof req.body.transactionCode !== 'string' || !/^\d{6}$/.test(req.body.transactionCode)) {
-        throw new HttpError(400, 'Bitte gib den sechsstelligen Ausgabecode vom Issuer auf deinem Notebook ein.');
-      }
-      if (!matchesSecret(req.body.transactionCode, offer.transactionCode)) {
-        offer.codeAttempts++;
-        if (offer.codeAttempts >= 5) {
-          offer.status = 'cancelled';
-          offer.cancellationReason = 'Zu viele falsche Ausgabecodes. Bitte erstelle auf dem Notebook ein neues Angebot.';
-          throw new HttpError(429, offer.cancellationReason);
-        }
-        throw new HttpError(400, `Der Ausgabecode ist falsch. Bitte prüfe den Code auf deinem Notebook. Noch ${5 - offer.codeAttempts} Versuch(e).`);
-      }
-      offer.holderDid = holder.did;
-      offer.holderJwk = holder.jwk;
-      offer.status = 'bound';
-    }
-    res.json(offerMetadata(offer));
-  }));
-  app.post('/api/offers/:id/credential', wrap(async (req, res) => {
-    const offer = findOffer(req.params.id, req.get('X-Offer-Token'));
-    const holder = await holderProof(offer, req.body);
-    if (holder.did !== offer.holderDid || !['issued', 'accepted'].includes(offer.status)) {
-      throw new HttpError(409, 'Der Ausweis ist für diese Wallet noch nicht zur Abholung freigegeben.');
-    }
-    const record = credentials.get(await sd.sha256b64(sd.parseSdJwt(offer.sdjwt).jwt));
-    if (!record || record.revokedAt) throw new HttpError(410, 'Dieser Ausweis wurde widerrufen oder sein Status ist nicht mehr verfügbar.');
-    res.json({ sdjwt: offer.sdjwt, issuerName: offer.issuerName, issuerDid: offer.issuerDid });
-  }));
-  app.post('/api/offers/:id/ack', wrap(async (req, res) => {
-    const offer = findOffer(req.params.id, req.get('X-Offer-Token'));
-    const holder = await holderProof(offer, req.body);
-    if (holder.did !== offer.holderDid || !['issued', 'accepted'].includes(offer.status)) {
-      throw new HttpError(409, 'Dieser Ausweis kann von dieser Wallet noch nicht bestätigt werden.');
-    }
-    offer.status = 'accepted';
-    res.json(offerMetadata(offer));
-  }));
-
-  app.get(['/', '/issuer.html'], (req, res) => {
-    res.set('Cache-Control', 'no-store');
-    res.sendFile(path.join(publicDirectory, 'issuer.html'));
-  });
-  for (const file of ['issuer.js', 'issuer.css', 'styles.css', 'lib/ui.js', 'lib/management.js', 'lib/texts.js',
-    'lib/sdjwt.js', 'lib/protocol.js', 'lib/credential-status.js']) {
-    app.get(`/${file}`, (req, res) => {
-      res.set('Cache-Control', 'no-cache');
-      res.sendFile(path.join(publicDirectory, ...file.split('/')));
+    const current = owner(req);
+    approved(current);
+    store.updateOrganisation(current.id, (item) => {
+      item.offers = item.offers.filter((entry) => entry.expires > clock());
+      if (item.offers.length >= 1000) throw new HttpError(429, 'Es gibt zu viele offene Angebote. Bitte warte auf deren Ablauf.');
+      item.offers.push(offer);
     });
-  }
-  app.use((req, res) => res.status(404).json({ error: 'Diese Seite oder API gibt es auf der Ausweisstelle nicht.' }));
-  app.use((error, req, res, next) => {
-    if (res.headersSent) return next(error);
-    const code = error instanceof HttpError ? error.status : error.type === 'entity.too.large' ? 413
-      : error instanceof SyntaxError && 'body' in error ? 400 : 500;
-    if (code === 500) console.error('Issuer-Serverfehler:', error);
-    res.status(code).json({ error: code === 500
-      ? 'Die Ausweisstelle konnte die Anfrage nicht verarbeiten. Bitte versuche es erneut.'
-      : code === 413 ? 'Die Anfrage ist zu groß.'
-        : code === 400 && !(error instanceof HttpError) ? 'Die Anfrage enthält kein gültiges JSON.' : error.message });
+    res.status(201).json({ ...offerMetadata(current, offer, true), url, qrDataUrl });
+  }));
+  app.get('/api/issuer/offers/:id', (req, res) => {
+    const { org, offer } = findOffer(req.params.id, null, owner(req).id);
+    res.json(offerMetadata(org, offer, true));
   });
-  return { app, adminToken };
+  app.post('/api/issuer/offers/:id/cancel', (req, res) => {
+    bodyFields(req.body, []);
+    const { org, offer } = findOffer(req.params.id, null, owner(req).id);
+    live(offer);
+    if (offer.status !== 'offered') throw new HttpError(409, 'Ein bereits signiertes Angebot kann nicht abgebrochen werden. Bitte widerrufe den Ausweis.');
+    store.updateOrganisation(org.id, (current) => { current.offers.find((item) => item.id === offer.id).status = 'cancelled'; });
+    res.json(offerMetadata(org, { ...offer, status: 'cancelled' }, true));
+  });
+  app.get('/api/offers/:id', (req, res) => {
+    const { org, offer } = findOffer(req.params.id, req.get('X-Offer-Token'));
+    live(offer);
+    res.json(offerMetadata(org, offer));
+  });
+  app.post('/api/offers/:id/claim', wrap(async (req, res) => {
+    const result = await serialize(async () => {
+      const { org, offer } = findOffer(req.params.id, req.get('X-Offer-Token'));
+      live(offer);
+      approved(org);
+      const holder = await holderProof(offer, org, req.body, ['proof', 'transactionCode']);
+      if (offer.holderDid && offer.holderDid !== holder.did) throw new HttpError(409, 'Dieses Angebot ist bereits mit einer anderen Wallet verbunden.');
+      if (offer.holderDid) {
+        approved(store.getOrganisation(org.id));
+        const record = org.credentials.find((entry) => entry.id === offer.credentialId);
+        if (!record || record.revokedAt) throw new HttpError(410, 'Dieser Ausweis wurde widerrufen oder sein Status ist nicht mehr verfügbar.');
+        return offerMetadata(org, offer);
+      }
+      if (typeof req.body.transactionCode !== 'string' || !/^\d{6}$/.test(req.body.transactionCode)) {
+        throw new HttpError(400, 'Bitte gib den sechsstelligen Ausgabecode aus dem Organisationsbrowser ein.');
+      }
+      if (!matchesSecret(req.body.transactionCode, offer.codeHash)) {
+        const updated = store.updateOrganisation(org.id, (current) => {
+          const entry = current.offers.find((item) => item.id === offer.id);
+          entry.codeAttempts++;
+          if (entry.codeAttempts >= 5) {
+            entry.status = 'cancelled';
+            entry.cancellationReason = 'Zu viele falsche Ausgabecodes. Bitte erstelle ein neues Angebot.';
+          }
+        }).offers.find((item) => item.id === offer.id);
+        throw new HttpError(updated.status === 'cancelled' ? 429 : 400, updated.cancellationReason
+          || `Der Ausgabecode ist falsch. Noch ${5 - updated.codeAttempts} Versuch(e).`);
+      }
+      const used = new Set(org.credentials.map((entry) => entry.statusIndex));
+      if (used.size >= STATUS_LIST_ENTRIES) throw new HttpError(409, 'Die Statusliste dieser Organisation ist voll.');
+      let statusIndex = randomInt(STATUS_LIST_ENTRIES);
+      while (used.has(statusIndex)) statusIndex = (statusIndex + 1) % STATUS_LIST_ENTRIES;
+      const sdjwt = await sd.issueSdJwt({
+        issuerDid: org.did, issuerPrivateJwk: org.privateJwk, holderPublicJwk: holder.jwk,
+        vct: EMPLOYEE_VCT, claims: offer.claims, validDays: 1,
+        status: { status_list: { idx: statusIndex, uri: `${publicUrl}/api/status-lists/${org.id}` } },
+      });
+      const { payload } = sd.describeCredential(sdjwt);
+      const credentialId = await sd.sha256b64(sd.parseSdJwt(sdjwt).jwt);
+      const current = store.getOrganisation(org.id);
+      approved(current);
+      const currentOffer = current.offers.find((item) => item.id === offer.id);
+      if (!currentOffer) throw new HttpError(410, 'Das Angebot ist abgelaufen.');
+      live(currentOffer);
+      const updated = store.updateOrganisation(org.id, (item) => {
+        item.credentials.push({
+          id: credentialId, issuerDid: org.did, holderDid: holder.did, claims: offer.claims, statusIndex,
+          issuedAt: new Date(payload.iat * 1000).toISOString(), expiresAt: new Date(payload.exp * 1000).toISOString(),
+          revokedAt: null,
+        });
+        Object.assign(item.offers.find((entry) => entry.id === offer.id), {
+          holderDid: holder.did, credentialId, sdjwt, status: 'issued', transactionCode: null,
+        });
+      });
+      return offerMetadata(updated, updated.offers.find((item) => item.id === offer.id));
+    });
+    res.json(result);
+  }));
+  for (const action of ['credential', 'ack']) {
+    app.post(`/api/offers/:id/${action}`, wrap(async (req, res) => {
+      const { org, offer } = findOffer(req.params.id, req.get('X-Offer-Token'));
+      live(offer);
+      const holder = await holderProof(offer, org, req.body);
+      const current = findOffer(req.params.id, req.get('X-Offer-Token'));
+      live(current.offer);
+      approved(current.org);
+      if (holder.did !== current.offer.holderDid || !['issued', 'accepted'].includes(current.offer.status)) {
+        throw new HttpError(409, 'Der Ausweis kann von dieser Wallet noch nicht abgeholt werden.');
+      }
+      const record = current.org.credentials.find((entry) => entry.id === current.offer.credentialId);
+      if (!record || record.revokedAt) throw new HttpError(410, 'Dieser Ausweis wurde widerrufen oder sein Status ist nicht mehr verfügbar.');
+      if (action === 'credential') {
+        return res.json({ sdjwt: current.offer.sdjwt, issuerName: current.org.name, issuerDid: current.org.did });
+      }
+      store.updateOrganisation(org.id, (item) => { item.offers.find((entry) => entry.id === offer.id).status = 'accepted'; });
+      res.json(offerMetadata(current.org, { ...current.offer, status: 'accepted' }));
+    }));
+  }
+  return { signedStatus };
 }

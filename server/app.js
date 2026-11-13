@@ -2,39 +2,21 @@ import express from 'express';
 import QRCode from 'qrcode';
 import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { createRequire } from 'node:module';
 import * as sd from '../public/lib/sdjwt.js';
 import { createStore } from './store.js';
 import { walletIcon } from './icons.js';
 import { managementAuth } from './management-auth.js';
-import { EMPLOYEE_VCT, REGISTRATION_PROOF, publicOrigin, verifyProof, validatePublicJwk } from '../public/lib/protocol.js';
-import { statusReference, loadStatusList, isRevoked } from '../public/lib/credential-status.js';
+import { EMPLOYEE_VCT, ROLES, publicOrigin } from '../public/lib/protocol.js';
+import { statusReference, verifyStatusList, isRevoked } from '../public/lib/credential-status.js';
+import { installIssuerRoutes, publicOrganisation } from './issuer-app.js';
+import { HttpError, wrap, bodyFields as requireBody, text } from './http.js';
 
 const publicDirectory = fileURLToPath(new URL('../public/', import.meta.url));
-const defaultDataDirectory = fileURLToPath(new URL('../data/', import.meta.url));
+const defaultDataDirectory = fileURLToPath(new URL('../hosted-data/', import.meta.url));
 const requestLifetime = 300;
 const vct = EMPLOYEE_VCT;
-const wrap = (handler) => (req, res, next) => Promise.resolve(handler(req, res)).catch(next);
-
-class HttpError extends Error {
-  constructor(status, message) {
-    super(message);
-    this.status = status;
-  }
-}
-
-function requireBody(body, fields) {
-  if (!body || typeof body !== 'object' || Array.isArray(body)
-    || Object.keys(body).some((key) => !fields.includes(key))) {
-    throw new HttpError(400, 'Die übermittelten Daten haben ein ungültiges Format.');
-  }
-}
-
-function text(value, label, max = 120) {
-  if (typeof value !== 'string' || !value.trim() || value.length > max) {
-    throw new HttpError(400, `${label} fehlt oder ist zu lang (höchstens ${max} Zeichen).`);
-  }
-  return value.trim();
-}
 
 export async function createApp({
   publicUrl = 'http://localhost:3000',
@@ -47,9 +29,10 @@ export async function createApp({
   if (trustMode !== 'manual') throw new Error('Im Workshop werden Issuer ausschließlich durch die Moderation freigegeben (TRUST_MODE=manual).');
   publicUrl = publicOrigin(publicUrl, 'PUBLIC_URL');
   const startQrDataUrl = await QRCode.toDataURL(`${publicUrl}/`, { width: 256, margin: 4 });
+  const issuerSetupUrl = `${publicUrl}/issuer.html`;
+  const issuerSetupQrDataUrl = await QRCode.toDataURL(issuerSetupUrl, { width: 256, margin: 4 });
   const store = createStore(dataDirectory);
   const requests = new Map();
-  const challenges = new Map();
   const attempts = [];
   let lastPresentation = null;
   const seconds = () => Math.floor(clock() / 1000);
@@ -57,11 +40,12 @@ export async function createApp({
   const walletTemplate = readFileSync(new URL('../public/wallet.html', import.meta.url), 'utf8');
   app.disable('x-powered-by');
   app.use((req, res, next) => {
-    const issuerOrigins = store.listIssuers().filter((issuer) => issuer.proofVerified).map((issuer) => issuer.publicUrl);
+    const issuerOrigins = [publicUrl];
     res.set({
       'X-Content-Type-Options': 'nosniff',
       'Referrer-Policy': 'no-referrer',
-      'Content-Security-Policy': `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' ${issuerOrigins.join(' ')}; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`,
+      'Permissions-Policy': 'camera=(self)',
+      'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
     });
     if (req.path === '/wallet.html') {
       res.set('X-Workshop-Issuer-Origins', JSON.stringify(issuerOrigins));
@@ -70,10 +54,21 @@ export async function createApp({
   });
   app.use('/api', (req, res, next) => {
     res.set('Cache-Control', 'no-store');
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
+      if (req.get('Sec-Fetch-Site') === 'cross-site') return res.status(403).json({ error: 'Eine fremde Webseite darf diese Aktion nicht ausführen.' });
+      const origin = req.get('Origin');
+      const local = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress)
+        && ['localhost', '127.0.0.1', '::1'].includes(req.hostname)
+        && origin === `${req.protocol}://${req.get('Host')}`;
+      if (origin && origin !== publicUrl && !local) return res.status(403).json({ error: 'Der Ursprung dieser Anfrage ist nicht erlaubt.' });
+      if (!req.is('application/json')) return res.status(415).json({ error: 'Diese Aktion benötigt Content-Type application/json.' });
+    }
     next();
   });
   const adminToken = managementAuth(app, '/api/admin');
   app.use(express.json({ limit: '64kb', strict: true }));
+  const { signedStatus } = await installIssuerRoutes(app, { store, publicUrl, clock });
+  const publicIssuer = (org) => publicOrganisation(org, publicUrl);
 
   function newRequest(mode = 'single') {
     for (const [id, request] of requests) {
@@ -112,7 +107,7 @@ export async function createApp({
 
   function isTrustedIssuer(did) {
     const issuer = store.getIssuer(did);
-    return issuer?.trusted === true && issuer.proofVerified === true && Boolean(issuer.ownerName);
+    return issuer?.state === 'approved';
   }
 
   async function checkPresentation(request, presentation) {
@@ -148,10 +143,21 @@ export async function createApp({
       const issuer = store.getIssuer(result.issuer);
       try {
         const { payload } = sd.decodeJwt(sd.parseSdJwt(presentation).jwt);
-        const reference = statusReference(payload, issuer.publicUrl);
-        const list = await loadStatusList(issuer, { now: clock });
+        const registered = publicIssuer(issuer);
+        const reference = statusReference(payload, registered);
+        const list = await verifyStatusList(await signedStatus(issuer), {
+          issuerDid: issuer.did, uri: registered.statusListUrl, now: clock(),
+        });
         if (isRevoked(list, reference.idx)) throw new Error('Dieser Ausweis wurde vom Issuer widerrufen.');
         result.credentialId = await sd.sha256b64(sd.parseSdJwt(presentation).jwt);
+        const current = store.getIssuer(result.issuer);
+        const record = current?.credentials.find((entry) => entry.id === result.credentialId);
+        if (!record || record.statusIndex !== reference.idx || record.holderDid !== result.holder
+          || record.revokedAt) throw new Error('Der Ausweis wurde widerrufen oder sein Ausstellungsbeleg fehlt.');
+        if (result.claims.organisation !== undefined && result.claims.organisation !== current.name) {
+          throw new Error('Die Organisation passt nicht zum ausstellenden Schlüssel.');
+        }
+        if (result.claims.role !== undefined && !ROLES.includes(result.claims.role)) throw new Error('Die Rolle ist ungültig.');
         if (list.expiresAt <= clock()) throw new Error('Die Statusliste ist nicht mehr aktuell.');
         result.statusCheckedAt = new Date(clock()).toISOString();
         result.statusListExpiresAt = new Date(list.expiresAt).toISOString();
@@ -170,7 +176,6 @@ export async function createApp({
     if (result.ok) {
       const issuer = store.getIssuer(result.issuer);
       result.issuerName = issuer.name;
-      result.issuerOwner = issuer.ownerName;
     }
     return result;
   }
@@ -198,64 +203,10 @@ export async function createApp({
 
   app.get('/api/health', (req, res) => res.json({ ok: true, role: 'workshop' }));
   app.get('/api/config', (req, res) => res.json({
-    role: 'workshop', eventTitle, publicUrl, trustMode, startQrDataUrl, credentialType: vct,
+    role: 'workshop', eventTitle, verifierName, publicUrl, trustMode, startQrDataUrl, credentialType: vct,
+    roles: ROLES, issuerSetupUrl, issuerSetupQrDataUrl,
   }));
-  app.get('/api/issuers', (req, res) => res.json(store.listIssuers()));
-  app.post('/api/issuers/challenge', (req, res) => {
-    for (const [id, challenge] of challenges) {
-      if (challenge.expiresAt <= seconds()) challenges.delete(id);
-    }
-    if (challenges.size >= 1000) return res.status(429).json({ error: 'Gerade gibt es zu viele Anmeldungen. Bitte warte kurz.' });
-    const challenge = {
-      id: crypto.randomUUID(), nonce: sd.b64url(crypto.getRandomValues(new Uint8Array(32))),
-      aud: publicUrl, expiresAt: seconds() + 120,
-    };
-    challenges.set(challenge.id, challenge);
-    res.status(201).json({ ...challenge, expiresAt: new Date(challenge.expiresAt * 1000).toISOString() });
-  });
-  app.post('/api/issuers', wrap(async (req, res) => {
-    requireBody(req.body, ['challengeId', 'proof']);
-    const challenge = challenges.get(req.body.challengeId);
-    if (!challenge || challenge.expiresAt <= seconds()) {
-      throw new HttpError(410, 'Die Anmeldung ist abgelaufen. Bitte melde deinen Issuer erneut an.');
-    }
-    const proof = text(req.body.proof, 'Der Schlüsselbeweis', 12000);
-    let payload;
-    try {
-      const did = sd.decodeJwt(proof).payload.iss;
-      const key = await validatePublicJwk(sd.jwkFromDid(did));
-      if (sd.didFromJwk(key) !== did) throw new Error('Die DID enthält keinen kanonischen öffentlichen Schlüssel.');
-      payload = await verifyProof(proof, {
-        type: REGISTRATION_PROOF, publicJwk: key, audience: publicUrl, nonce: challenge.nonce, issuer: did,
-      });
-    } catch (error) {
-      throw new HttpError(400, `Der Issuer konnte seinen Schlüssel nicht nachweisen: ${error.message}`);
-    }
-    const did = payload.iss;
-    const name = text(payload.name, 'Der Issuer-Name');
-    const employeeName = text(payload.employeeName, 'Der Name des Mitarbeitenden');
-    let issuerUrl;
-    try { issuerUrl = publicOrigin(payload.publicUrl, 'Die Issuer-Adresse'); } catch (error) {
-      throw new HttpError(400, error.message);
-    }
-    if (new URL(publicUrl).protocol === 'https:' && new URL(issuerUrl).protocol !== 'https:') {
-      throw new HttpError(400, 'Am öffentlichen Workshop muss dein Issuer eine HTTPS-Tunnel-Adresse haben, nicht localhost.');
-    }
-    // Consume after verification but before persisting, including concurrent registrations.
-    if (challenges.get(challenge.id) !== challenge) throw new HttpError(409, 'Diese Anmeldung wurde bereits verwendet.');
-    challenges.delete(challenge.id);
-    const existing = store.getIssuer(did);
-    const identityChanged = existing && (existing.name !== name || existing.employeeName !== employeeName);
-    const issuer = store.putIssuer({
-      did, name, employeeName, publicUrl: issuerUrl, proofVerified: true,
-      fingerprint: (await sd.sha256b64(did)).slice(0, 16),
-      trusted: Boolean(existing?.proofVerified && existing.trusted && !identityChanged),
-      ownerName: identityChanged ? null : existing?.ownerName || null,
-      trustedAt: identityChanged ? null : existing?.trustedAt || null,
-      createdAt: existing?.createdAt ?? seconds(),
-    });
-    res.status(existing ? 200 : 201).json(issuer);
-  }));
+  app.get('/api/issuers', (req, res) => res.json(store.listIssuers().map(publicIssuer)));
 
   app.post('/api/requests', wrap(async (req, res) => {
     requireBody(req.body, ['mode']);
@@ -302,7 +253,7 @@ export async function createApp({
         store.recordCheckin(result.holder, {
           id: request.id, name, claims: result.claims,
           ...(result.claims.organisation ? { organisation: result.claims.organisation } : {}),
-          issuerName: result.issuerName, issuerDid: result.issuer, issuerOwner: result.issuerOwner,
+          issuerName: result.issuerName, issuerDid: result.issuer,
           holderDid: result.holder, credentialType: result.vct, credentialId: result.credentialId,
           trustedAtCheckin: true,
           statusCheckedAt: result.statusCheckedAt, statusListExpiresAt: result.statusListExpiresAt,
@@ -333,10 +284,10 @@ export async function createApp({
     const counts = new Map();
     for (const checkin of checkins) counts.set(checkin.issuerDid, (counts.get(checkin.issuerDid) || 0) + 1);
     const issuers = store.listIssuers().map((issuer) => ({
-      ...issuer, checkinCount: counts.get(issuer.did) || 0,
+      ...publicIssuer(issuer), checkinCount: counts.get(issuer.did) || 0,
     }));
     res.json({
-      issuers, attempts,
+      issuers, attendees: store.listAttendees(), attempts,
       stats: {
         registered: issuers.length,
         checkins: checkins.length,
@@ -345,16 +296,14 @@ export async function createApp({
   });
   app.post('/api/admin/issuers/:did/trust', (req, res, next) => {
     try {
-      requireBody(req.body, ['trusted', 'ownerName']);
+      requireBody(req.body, ['trusted']);
       if (typeof req.body.trusted !== 'boolean') throw new HttpError(400, 'Der Vertrauensstatus muss true oder false sein.');
       const issuer = store.getIssuer(req.params.did);
       if (!issuer) throw new HttpError(404, 'Dieser Issuer wurde nicht gefunden.');
-      if (!issuer.proofVerified) throw new HttpError(409, 'Dieser alte Issuer muss sich zuerst mit einem Schlüsselbeweis neu anmelden.');
-      const ownerName = req.body.trusted ? text(req.body.ownerName, 'Die zugeordnete Person') : issuer.ownerName;
-      res.json(store.putIssuer({
-        ...issuer, trusted: req.body.trusted, ownerName,
-        trustedAt: req.body.trusted ? new Date(clock()).toISOString() : null,
-      }));
+      res.json(publicIssuer(store.updateOrganisation(issuer.id, (org) => {
+        org.state = req.body.trusted ? 'approved' : 'suspended';
+        if (req.body.trusted) org.approvedAt = new Date(clock()).toISOString();
+      })));
     } catch (error) {
       next(error);
     }
@@ -369,6 +318,7 @@ export async function createApp({
     }
   });
   app.post('/api/admin/replay', wrap(async (req, res) => {
+    requireBody(req.body, []);
     if (!lastPresentation) throw new HttpError(409, 'Für die Replay-Demo muss zuerst eine Person erfolgreich einchecken.');
     const request = newRequest();
     request.status = 'processing';
@@ -379,6 +329,7 @@ export async function createApp({
   }));
   app.post('/api/admin/reset', (req, res, next) => {
     try {
+      requireBody(req.body, []);
       store.clearAttendees();
       requests.clear();
       attempts.length = 0;
@@ -396,9 +347,8 @@ export async function createApp({
       res.redirect(`/${page}.html${query < 0 ? '' : req.originalUrl.slice(query)}`);
     });
   }
-  app.get('/issuer.html', (req, res) => res.redirect('/?issuer=separate'));
   app.get('/wallet.html', (req, res) => {
-    const origins = JSON.stringify(store.listIssuers().filter((issuer) => issuer.proofVerified).map((issuer) => issuer.publicUrl))
+    const origins = JSON.stringify([publicUrl])
       .replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
     res.set('Cache-Control', 'no-cache').type('html').send(walletTemplate
       .replace('name="issuer-origins" content="[]"', `name="issuer-origins" content="${origins}"`)
@@ -407,6 +357,13 @@ export async function createApp({
   for (const [file, size] of [['icon-192.png', 192], ['icon-512.png', 512], ['apple-touch-icon.png', 180]]) {
     const icon = walletIcon(size);
     app.get(`/icons/${file}`, (req, res) => res.type('png').set('Cache-Control', 'public, max-age=86400').send(icon));
+  }
+  const require = createRequire(import.meta.url);
+  const scannerDirectory = path.dirname(require.resolve('qr-scanner'));
+  for (const file of ['qr-scanner.min.js', 'qr-scanner-worker.min.js']) {
+    app.get(`/vendor/qr-scanner/${file}`, (req, res) => {
+      res.set('Cache-Control', 'no-cache').sendFile(path.join(scannerDirectory, file));
+    });
   }
   app.use(express.static(publicDirectory, {
     setHeaders(res) { res.set('Cache-Control', 'no-cache'); },

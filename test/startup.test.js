@@ -7,8 +7,6 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import * as sd from '../public/lib/sdjwt.js';
-import { REGISTRATION_PROOF, signProof } from '../public/lib/protocol.js';
 
 const entrypoint = fileURLToPath(new URL('../server/index.js', import.meta.url));
 
@@ -74,17 +72,13 @@ test('Configured server starts outside the project directory, stops cleanly and 
   const config = await (await fetch(`${server.base}/api/config`)).json();
   assert.equal(config.publicUrl, `http://localhost:${port}`);
   assert.equal(config.trustMode, 'manual');
-  const issuer = await sd.generateKeyPair();
-  const challenge = await (await fetch(`${server.base}/api/issuers/challenge`, { method: 'POST' })).json();
-  const proof = await signProof(REGISTRATION_PROOF, {
-    iss: issuer.did, aud: config.publicUrl, nonce: challenge.nonce,
-    name: 'Process restart test', employeeName: 'Erika', publicUrl: 'https://issuer.example.org',
-  }, issuer.privateJwk);
-  const registered = await fetch(`${server.base}/api/issuers`, {
+  const registered = await fetch(`${server.base}/api/organisations`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ challengeId: challenge.id, proof }),
+    body: JSON.stringify({ name: 'Process restart test' }),
   });
   assert.equal(registered.status, 201);
+  const organisation = (await registered.json()).organisation;
+  const cookie = registered.headers.get('set-cookie').split(';')[0];
   await server.stop();
   const restarted = await start(t, directory, port);
   assert.notEqual(restarted.adminToken, server.adminToken);
@@ -94,27 +88,29 @@ test('Configured server starts outside the project directory, stops cleanly and 
   assert.equal((await session(server.adminToken)).status, 401);
   assert.equal((await session(restarted.adminToken)).status, 200);
   const issuers = await (await fetch(`${restarted.base}/api/issuers`)).json();
-  assert.equal(issuers[0].did, issuer.did);
+  assert.equal(issuers[0].did, organisation.did);
   assert.equal(issuers[0].trusted, false);
+  const tenantSession = await fetch(`${restarted.base}/api/issuer/session`, { headers: { Cookie: cookie } });
+  assert.equal((await tenantSession.json()).organisation.id, organisation.id);
   assert.equal((await fetch(`${restarted.base}/wallet.html`)).status, 200);
   await restarted.stop();
 });
 
-test('Issuer startup prints private local and public unlock links without env secrets', { timeout: 15000 }, async (t) => {
-  const directory = await mkdtemp(path.join(tmpdir(), 'eudi-issuer-startup-'));
+test('Hosted startup prints public organisation setup and private host links, with no issuer operator runtime', { timeout: 15000 }, async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'eudi-hosted-startup-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const port = await unusedPort();
   await writeFile(path.join(directory, '.env'), [
-    `PORT=${port}`, 'HOST_PORT=3001', 'APP_ROLE=issuer', 'PUBLIC_URL=https://issuer.example.org',
-    'WORKSHOP_URL=https://workshop.example.org', `DATA_DIR="${path.join(directory, 'data')}"`,
+    `PORT=${port}`, 'HOST_PORT=8080', 'PUBLIC_URL=https://workshop.example.org',
+    `DATA_DIR="${path.join(directory, 'hosted-data')}"`,
   ].join('\n'));
   const server = await start(t, directory, port);
-  assert.ok(server.output.includes(`http://localhost:3001/issuer.html#admin-token=${server.adminToken}`));
-  assert.ok(server.output.includes(`https://issuer.example.org/issuer.html#admin-token=${server.adminToken}`));
-  assert.equal((await fetch(`${server.base}/api/issuer/status`)).status, 401);
-  assert.equal((await fetch(`${server.base}/api/issuer/session`, {
-    headers: { 'X-Admin-Token': server.adminToken },
-  })).status, 200);
+  assert.ok(server.output.includes(`http://localhost:8080/admin.html#admin-token=${server.adminToken}`));
+  assert.ok(server.output.includes(`https://workshop.example.org/admin.html#admin-token=${server.adminToken}`));
+  assert.ok(server.output.includes('Organisation anlegen: https://workshop.example.org/issuer.html'));
+  assert.equal(server.output.includes(`/issuer.html#admin-token=${server.adminToken}`), false);
+  assert.deepEqual((await (await fetch(`${server.base}/api/health`)).json()), { ok: true, role: 'workshop' });
+  assert.equal((await (await fetch(`${server.base}/api/issuer/session`)).json()).organisation, null);
   await server.stop();
 });
 
@@ -128,5 +124,25 @@ test('Invalid ports exit with a configuration error', { timeout: 10000 }, async 
     const [code] = await once(child, 'exit');
     assert.notEqual(code, 0);
     assert.match(output, /PORT muss zwischen 1 und 65535 liegen/);
+  }
+});
+
+test('Obsolete two-server runtime options fail explicitly without starting a separate issuer', { timeout: 10000 }, async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'eudi-old-startup-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  for (const [extra, expected] of [
+    [{ APP_ROLE: 'issuer' }, /separate Issuer-Modus wurde ersetzt/],
+    [{ WORKSHOP_URL: 'https://workshop.example.org' }, /alten Zwei-Server-Modus/],
+  ]) {
+    const env = { ...process.env, DATA_DIR: directory, PORT: '3000' };
+    delete env.APP_ROLE;
+    delete env.WORKSHOP_URL;
+    Object.assign(env, extra);
+    const child = spawn(process.execPath, [entrypoint], { env, stdio: ['ignore', 'ignore', 'pipe'] });
+    let output = '';
+    child.stderr.on('data', (data) => { output += data; });
+    const [code] = await once(child, 'exit');
+    assert.notEqual(code, 0);
+    assert.match(output, expected);
   }
 });

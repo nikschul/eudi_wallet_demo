@@ -1,0 +1,7 @@
+services:
+  app:
+    image: eudi-wallet-demo:local
+    pull_policy: build
+    build:
+      context: .
+      target: runtime

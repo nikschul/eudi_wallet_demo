@@ -1,6 +1,7 @@
 import * as sd from './lib/sdjwt.js';
 import { statusReference, loadStatusList, isRevoked } from './lib/credential-status.js';
 import { EMPLOYEE_VCT, HOLDER_PROOF, decodeOffer, publicOrigin, signProof, canonicalWalletUrl } from './lib/protocol.js';
+import { createCameraScanner, validateWalletQr } from './wallet-scanner.js';
 import {
   el, api, explain, raw, attributes, steps, labels, action, formAction,
   run, setupPage, readStored, writeStored, removeStored, requireCrypto, didCard, clearError,
@@ -11,11 +12,72 @@ const root = document.getElementById('app');
 let renderVersion = 0;
 let offerTimer;
 let statusTimer;
+let camera;
 const revokedCredentials = new Set();
 
 function stopTimers() {
   clearTimeout(offerTimer);
   clearTimeout(statusTimer);
+}
+
+function stopCamera() {
+  camera?.stop();
+  camera = null;
+}
+
+function openQr(url) {
+  history.replaceState(null, '', url.pathname + url.hash);
+  return render();
+}
+
+function scannerButton(version) {
+  return action(el('button', { type: 'button' }, 'QR-Code scannen'), () => openScanner(version));
+}
+
+async function openScanner(version) {
+  if (version !== renderVersion) return;
+  stopTimers();
+  stopCamera();
+  const scannerVersion = ++renderVersion;
+  const video = el('video', { playsinline: true, muted: true, 'aria-label': 'Kameravorschau für QR-Codes' });
+  const heading = el('h2', { tabindex: '-1' }, 'QR-Code scannen');
+  const status = el('p', { class: 'scanner-status', role: 'status', 'aria-live': 'polite' });
+  const retry = action(el('button', { type: 'button', class: 'secondary', hidden: true }, 'Kamera erneut versuchen'),
+    () => camera?.start());
+  root.replaceChildren(el('section', { class: 'card wallet-scanner', 'aria-label': 'QR-Code scannen' },
+    heading,
+    el('p', {}, 'Scanne ein Angebot vom Notebook oder den QR am Empfang. Du bleibst in deiner Wallet.'),
+    video, status,
+    el('div', { class: 'scanner-actions' }, retry,
+      action(el('button', { type: 'button', class: 'secondary' }, 'Scannen abbrechen'), render))));
+  camera = createCameraScanner({
+    video, origin: document.querySelector('meta[name="wallet-origin"]').content,
+    onState(state, message) {
+      if (scannerVersion !== renderVersion) return;
+      status.textContent = message;
+      status.className = `scanner-status${state === 'error' ? ' message error' : ''}`;
+      status.setAttribute('role', state === 'error' ? 'alert' : 'status');
+      status.setAttribute('aria-live', state === 'error' ? 'assertive' : 'polite');
+      retry.hidden = state !== 'error';
+    },
+    onDecode: (url) => {
+      if (scannerVersion !== renderVersion) return;
+      return run(() => openQr(url));
+    },
+  });
+  heading.focus();
+  await camera.start();
+}
+
+function pastedQr() {
+  const input = el('input', { type: 'url', name: 'link', required: true, id: 'checkin-url', placeholder: 'https://…/wallet.html#…', autocomplete: 'off' });
+  const form = formAction(el('form', { class: 'stack' },
+    el('label', { for: 'checkin-url' }, 'QR-Link einfügen (zum Beispiel ohne Kamerazugriff)'), input,
+    el('button', { type: 'submit', class: 'secondary' }, 'QR-Link öffnen')), async (data) => {
+    const url = validateWalletQr(data.get('link'), document.querySelector('meta[name="wallet-origin"]').content);
+    await openQr(url);
+  });
+  return el('details', { class: 'card' }, el('summary', {}, 'QR-Link öffnen'), form);
 }
 
 function storedCredential(walletDid, credential) {
@@ -46,12 +108,14 @@ async function credentialStatuses(credentials, walletDid, registeredIssuers) {
         return { state: 'expired', reason: 'Die Gültigkeitsdauer dieses Ausweises ist abgelaufen.', checkedAt: Date.now() };
       }
       // Older credentials must never acquire a status from an unsigned local ID.
-      if (!payload.status?.status_list) statusReference(payload, location.origin);
+      if (!payload.status?.status_list) {
+        throw new Error('Dieser ältere Ausweis hat keinen Widerrufsstatus. Bitte lasse ihn neu ausstellen.');
+      }
       const issuers = await registry;
       if (issuers.error) throw issuers.error;
       const issuer = issuers.find((entry) => entry.did === payload.iss && entry.proofVerified);
       if (!issuer) throw new Error('Die Ausweisstelle ist nicht im aktuellen Workshop-Register registriert.');
-      const reference = statusReference(payload, issuer.publicUrl);
+      const reference = statusReference(payload, issuer);
       if (!lists.has(issuer.did)) lists.set(issuer.did, loadStatusList(issuer));
       const list = await lists.get(issuer.did);
       if (list.expiresAt <= Date.now()) throw new Error('Die Statusliste ist nicht mehr aktuell.');
@@ -113,16 +177,6 @@ function pollStatuses(wallet, credentials, views, version, initialStatuses) {
   }
   if (initialStatuses) schedule(initialStatuses);
   else run(refresh);
-}
-
-function ensureIssuerConnection(baseUrl) {
-  const origins = JSON.parse(document.querySelector('meta[name="issuer-origins"]').content);
-  if (!origins.includes(baseUrl)) {
-    // Reload when a new issuer was registered after this document's CSP was set.
-    location.reload();
-    return false;
-  }
-  return true;
 }
 
 function goHome() {
@@ -199,15 +253,16 @@ function onboarding(version) {
   root.replaceChildren(journey(0), el('section', { class: 'card empty-state wallet-empty' },
     el('div', { class: 'wallet-outline', 'aria-hidden': 'true' }),
     el('h2', {}, 'Wallet einmalig auf diesem Handy einrichten'),
-    el('p', {}, 'Die Ausweisstelle läuft auf deinem Rechner. Hier auf dem Handy verwahrst du deinen Ausweis und entscheidest später, was du teilst.'),
+    el('p', {}, 'Verwalte deine Organisation am Notebook unter derselben Workshop-Adresse. Hier auf dem Handy verwahrst du deinen Ausweis und entscheidest später, was du teilst.'),
     el('p', {}, fromOffer ? 'Dein Ausstellungsangebot ist geöffnet. In diesem Browser wurde noch keine Wallet gefunden. Wenn dies dein erster Besuch ist, richte sie jetzt einmalig ein; dein Angebot bleibt erhalten.'
       : 'Keine Anmeldung und keine Installation: Dein Browser erzeugt einen persönlichen Schlüssel.'),
     el('div', { class: 'message warning' },
       el('strong', {}, 'Du hast schon eine Wallet eingerichtet? Nicht noch einmal anlegen.'),
-      el('p', {}, 'Öffne den QR-Link im selben normalen Browser wie deine vorhandene Wallet, nicht im Kamera-In-App-Browser oder privaten Modus. Vergleiche auch die Workshop-Adresse. Eine andere Tunnel-Adresse oder eine installierte PWA hat eigenen Speicher; Schlüssel werden nicht automatisch übertragen.'),
+      el('p', {}, 'Öffne die Wallet im selben Browser oder derselben installierten PWA wie bisher. Nutze dort „QR-Code scannen“ oder füge den QR-Link ein. Ein privates Fenster, eine andere Workshop-Adresse oder ein anderer Browser kann getrennten Speicher haben; Schlüssel werden nicht automatisch übertragen.'),
       el('p', { class: 'break-anywhere' }, `Aktuelle Wallet-Adresse: ${location.origin}/wallet.html`)),
-    create, explain('keypair'),
-    el('p', { class: 'muted' }, 'Bleibe im selben normalen Browser. Eine installierte PWA kann auf iOS einen eigenen Speicher haben.')));
+    create, scannerButton(version), explain('keypair'),
+    el('p', { class: 'muted' }, 'Bleibe im selben Browser oder derselben PWA. Eine installierte PWA kann auf iOS einen eigenen Speicher haben.')),
+  pastedQr());
 }
 
 async function holderProof(wallet, offer) {
@@ -221,9 +276,10 @@ async function issuance(wallet, link, version) {
   const issuers = await api('/issuers');
   if (version !== renderVersion) return;
   const issuer = issuers.find((entry) => entry.did === link.issuer && entry.proofVerified);
-  if (!issuer) throw new Error('Diese Ausweisstelle ist noch nicht beim Workshop registriert. Melde sie zuerst auf deinem Rechner an und scanne den QR erneut.');
-  const baseUrl = publicOrigin(issuer.publicUrl, 'Issuer-Adresse');
-  if (!ensureIssuerConnection(baseUrl)) return;
+  if (!issuer) throw new Error('Diese Organisation ist noch nicht im Workshop registriert. Prüfe ihre Einrichtung am Notebook und scanne den QR erneut.');
+  const baseUrl = publicOrigin(issuer.publicUrl, 'Workshop-Adresse');
+  if (baseUrl !== location.origin) throw new Error('Diese Organisation gehört nicht zu dieser Workshop-Zentrale.');
+  if (issuer.state !== 'approved') throw new Error('Diese Organisation ist noch nicht freigegeben oder wurde gesperrt. Bitte wende dich an die Moderation.');
   const remote = (suffix = '', body) => api(`/offers/${encodeURIComponent(link.id)}${suffix}`, {
     baseUrl, offerToken: link.token, ...(body === undefined ? {} : { body }),
   });
@@ -234,13 +290,15 @@ async function issuance(wallet, link, version) {
     el('span', { class: 'eyebrow' }, 'Angebot deiner Ausweisstelle'),
     el('h2', {}, issuer.name), attributes(offer.claims),
     el('p', { class: 'message notice' }, 'Deine vorhandene Wallet wird verwendet. Du musst sie nicht erneut einrichten.'),
-    el('p', {}, 'Gib den Ausgabecode vom Notebook ein. Der Ausweis wird erst danach auf dem Rechner bewusst signiert. Es wird nur dein öffentlicher Schlüssel übertragen.'));
+    el('p', {}, 'Gib den sechsstelligen Ausgabecode vom Notebook ein. Nach erfolgreicher Prüfung wird der Ausweis automatisch signiert. Bleibe dazu auf diesem Handy. Dein privater Schlüssel wird nicht übertragen.'),
+    action(el('button', { type: 'button', class: 'secondary' }, 'Zur Wallet'), goHome));
   root.replaceChildren(journey(1), panel);
 
   async function displayIssued() {
     const received = await remote('/credential', { proof: await holderProof(wallet, offer) });
     const description = sd.describeCredential(received.sdjwt);
     if (description.payload.vct !== EMPLOYEE_VCT || description.payload.iss !== issuer.did
+      || description.claims.organisation !== issuer.name
       || sd.didFromJwk(description.payload.cnf.jwk) !== wallet.did) {
       throw new Error('Der empfangene Nachweis passt nicht zu deiner Wallet oder diesem Aussteller.');
     }
@@ -276,10 +334,11 @@ async function issuance(wallet, link, version) {
       await render();
       notify('Mitarbeiterausweis gespeichert. Du kannst jetzt am Empfang einchecken.');
     });
-    panel.replaceChildren(el('span', { class: 'eyebrow' }, 'Auf deinem Rechner signiert'),
+    panel.replaceChildren(el('span', { class: 'eyebrow' }, 'Automatisch von deiner Organisation signiert'),
       el('h2', {}, 'Dein Mitarbeiterausweis ist bereit'),
-      el('p', {}, `Signatur, Bindung an deine Wallet und aktueller Widerrufsstatus wurden geprüft. Aussteller: ${issuer.name}.`),
-      attributes(description.claims), accept, explain('credential'),
+      el('p', {}, `Signatur, Bindung an deine Wallet und aktueller Widerrufsstatus wurden geprüft. Aussteller und signierte Organisation: ${issuer.name}.`),
+      attributes(description.claims), accept,
+      action(el('button', { type: 'button', class: 'secondary' }, 'Zur Wallet'), goHome), explain('credential'),
       credentialRaw(received));
   }
 
@@ -298,16 +357,19 @@ async function issuance(wallet, link, version) {
 
   async function connect(transactionCode) {
     requireCrypto();
+    if (transactionCode !== undefined && !/^\d{6}$/.test(transactionCode)) {
+      throw new Error('Bitte gib den sechsstelligen Ausgabecode vom Notebook ein.');
+    }
     await remote('/claim', {
       proof: await holderProof(wallet, offer),
       ...(transactionCode === undefined ? {} : { transactionCode }),
     });
     if (version !== renderVersion) return;
     panel.replaceChildren(el('span', { class: 'eyebrow' }, 'Wallet verbunden'),
-      el('h2', {}, 'Jetzt geht es auf deinem Rechner weiter'),
-      el('p', {}, 'Ausgabecode und Wallet-Schlüsselbesitz wurden geprüft. Auf deinem Notebook kannst du jetzt „Mitarbeiterausweis jetzt signieren“ anklicken. Ein zweiter Codevergleich ist nicht nötig.'),
+      el('h2', {}, 'Dein Ausweis wird automatisch signiert'),
+      el('p', {}, 'Ausgabecode und Wallet-Schlüsselbesitz wurden geprüft. Bleibe auf diesem Handy: Die Organisation signiert automatisch, danach kannst du den Ausweis prüfen und speichern. Am Notebook ist keine weitere Aktion nötig.'),
       el('p', { class: 'muted' }, 'Dein privater Schlüssel bleibt hier auf dem Handy.'),
-      explain('binding'));
+      action(el('button', { type: 'button', class: 'secondary' }, 'Zur Wallet'), goHome), explain('binding'));
     await waitForIssue();
   }
   if (['bound', 'issued', 'accepted'].includes(offer.status)) return connect();
@@ -316,11 +378,11 @@ async function issuance(wallet, link, version) {
       el('input', {
         name: 'transactionCode', type: 'text', required: true, minlength: 6, maxlength: 6,
         pattern: '[0-9]{6}', inputmode: 'numeric', autocomplete: 'off',
-        title: 'Bitte gib die sechs Ziffern ein, die nur dein Issuer auf dem Notebook anzeigt.',
+        title: 'Bitte gib die sechs Ziffern ein, die nur beim Angebot auf dem Notebook angezeigt werden.',
         'data-validation-message': 'Bitte gib den sechsstelligen Ausgabecode vom Notebook ein.',
       })),
-    el('p', { class: 'muted' }, 'Der Code steht nur beim Issuer unter dem Angebots-QR. Er ist kein Wallet-Passwort und keine Freigabe durch den Empfang.'),
-    el('button', { type: 'submit' }, 'Ausgabecode prüfen & Wallet verbinden')),
+    el('p', { class: 'muted' }, 'Der Code steht nur am Notebook unter dem Angebots-QR. Er ist kein Wallet-Passwort und keine Freigabe durch den Empfang.'),
+    el('button', { type: 'submit' }, 'Ausgabecode prüfen & Ausweis empfangen')),
   async (data) => connect(String(data.get('transactionCode')).trim()));
   panel.append(connectForm, explain('issuance'), raw({
     issuerDid: issuer.did, holderDid: wallet.did, expiresAt: offer.expiresAt,
@@ -348,7 +410,7 @@ async function consent(wallet, id, version) {
   });
   if (!candidates.length) {
     root.replaceChildren(journey(1), el('section', { class: 'card' }, el('h2', {}, 'Dir fehlt noch dein Mitarbeiterausweis'),
-      el('p', {}, 'Öffne deine eigene Ausweisstelle auf dem Rechner. Bereite dort die Ausstellung vor und scanne deren QR mit diesem Handy. Erst danach kommst du zum Empfang zurück.'),
+      el('p', {}, 'Öffne deine freigegebene Organisation am Notebook unter dieser Workshop-Adresse. Erstelle dort ein Angebot und scanne dessen QR in deiner Wallet. Erst danach kommst du zum Empfang zurück.'),
       action(el('button', { type: 'button', class: 'secondary' }, 'Zur Wallet'), goHome), explain('issuance')));
     return;
   }
@@ -423,29 +485,17 @@ async function consent(wallet, id, version) {
 
 function home(wallet, version) {
   const credentials = el('section', { class: 'stack wallet-credentials', 'aria-label': 'Deine Ausweise' });
-  const linkInput = el('input', { type: 'url', name: 'link', required: true, id: 'checkin-url', placeholder: 'https://…/wallet.html#…', autocomplete: 'off' });
-  const linkForm = formAction(el('form', { class: 'stack' },
-    el('label', { for: 'checkin-url' }, 'QR-Link einfügen (zum Beispiel in der installierten PWA)'), linkInput,
-    el('button', { type: 'submit', class: 'secondary' }, 'QR-Link öffnen')), async (data) => {
-    const url = new URL(data.get('link'));
-    if (url.origin !== location.origin || url.pathname !== '/wallet.html'
-      || (!/^#req=[a-f0-9-]{36}$/.test(url.hash) && !decodeOffer(url.hash))) {
-      throw new Error('Bitte verwende einen Wallet-QR-Link dieser Workshop-Zentrale.');
-    }
-    history.replaceState(null, '', url.pathname + url.hash);
-    await render();
-  });
   root.replaceChildren(el('h2', {}, 'Meine Ausweise'), credentials,
     el('section', { class: 'card' }, el('h2', {}, wallet.credentials.length ? 'Ausweis am Empfang vorzeigen' : 'Einen Ausweis erhalten'),
       el('p', {}, wallet.credentials.length
         ? 'Erst wenn du den Empfangs-QR scannst oder dessen Link bewusst öffnest, fragt der Empfang nach Angaben aus deinem Ausweis. Hier siehst du nur deine gespeicherten Ausweise.'
-        : 'Hoste deine Ausweisstelle auf deinem Rechner. Erstelle dort ein Angebot und scanne dessen QR mit diesem Handy. Deine Wallet bleibt hier.'),
-      explain('issuance')),
-    el('details', { class: 'card' }, el('summary', {}, 'QR-Link öffnen'), linkForm),
+        : 'Öffne deine freigegebene Organisation am Notebook unter dieser Workshop-Adresse. Erstelle dort ein Angebot und scanne dessen QR hier in der Wallet.'),
+      scannerButton(version), explain('issuance')),
+    pastedQr(),
     el('details', { class: 'card wallet-settings' }, el('summary', {}, 'Wallet-Details'),
       didCard(wallet.did),
       action(el('button', { type: 'button', class: 'secondary danger' }, 'Wallet zurücksetzen'), async () => {
-      if (!confirm('Wallet-Schlüssel und Ausweise auf diesem Handy unwiderruflich löschen? Die Ausweisstelle auf deinem Rechner bleibt erhalten.')) return;
+      if (!confirm('Wallet-Schlüssel und Ausweise auf diesem Handy unwiderruflich löschen? Deine Organisation in der Workshop-Zentrale bleibt erhalten.')) return;
       removeStored('wallet', 'pendingOffer');
       await render();
     })));
@@ -461,6 +511,7 @@ function home(wallet, version) {
 }
 
 async function render() {
+  stopCamera();
   clearError();
   stopTimers();
   const version = ++renderVersion;
@@ -491,7 +542,7 @@ async function render() {
     if (!root.querySelector('.card')) root.replaceChildren(el('section', { class: 'card' },
       el('h2', {}, 'Gerade nicht möglich'),
       el('p', {}, location.hash.startsWith('#offer=')
-        ? 'Prüfe, ob dein Issuer und sein Tunnel laufen. Bei einer neuen Tunnel-Adresse: Issuer neu anmelden und den QR erneut scannen.'
+        ? 'Prüfe deine Verbindung zur Workshop-Zentrale und die Freigabe deiner Organisation. Scanne bei einem abgelaufenen Angebot einen neuen QR vom Notebook.'
         : currentRequestId() ? 'Scanne den aktuellen QR am Empfang erneut, um einen neuen persönlichen Check-in-Versuch zu öffnen.'
           : 'Prüfe deine Verbindung zur Workshop-Zentrale. Gespeicherte Ausweise bleiben in diesem Browser erhalten.'),
       action(el('button', { type: 'button', class: 'secondary' }, 'Erneut versuchen'), render),
@@ -504,10 +555,11 @@ window.addEventListener('hashchange', () => run(render));
 window.addEventListener('storage', (event) => {
   if (!event.key || event.key === 'wallet') run(render);
 });
-window.addEventListener('pagehide', () => { stopTimers(); renderVersion++; });
+window.addEventListener('pagehide', () => { stopCamera(); stopTimers(); renderVersion++; });
 window.addEventListener('pageshow', (event) => { if (event.persisted) run(render); });
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
+    stopCamera();
     stopTimers();
     renderVersion++;
   } else run(render);

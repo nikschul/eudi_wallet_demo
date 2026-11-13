@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#179C7D">
-  <meta name="description" content="Hands-on-Workshop: eigene Ausweisstelle am Rechner, Mitarbeiterausweis auf dem Handy und Check-in am Empfang.">
+  <meta name="description" content="Organisation im Browser einrichten, Mitarbeiterausweis in der Smartphone-Wallet empfangen und am Kiosk einchecken.">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/icons/wallet.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
@@ -15,37 +15,39 @@
 <body>
   <header class="site-header">
     <a class="brand" href="/"><span class="brand-mark" aria-hidden="true">W</span> EUDI <span class="brand-light">/ Demo</span></a>
-    <nav aria-label="Hauptnavigation"><a href="/wallet.html">Wallet</a><a href="/kiosk.html">Empfang</a></nav>
+    <nav aria-label="Hauptnavigation"><a href="/issuer.html">Organisation</a><a href="/wallet.html">Wallet</a><a href="/kiosk.html">Empfang</a></nav>
   </header>
   <main class="shell landing">
     <div id="error" class="message error" role="alert" hidden></div>
     <div id="notice" class="message notice" role="status" hidden></div>
     <section class="hero">
       <h1 data-event-title>EUDI Wallet Workshop</h1>
-      <p>Deine Ausweisstelle läuft auf deinem Rechner. Deine Wallet bleibt auf deinem Handy. Am Empfang zeigst du nur die Angaben vor, die du freigibst.</p>
+      <p>Der Host stellt die Anwendung bereit. Du richtest deine Organisation im Laptop-Browser ein; deine persönliche Wallet bleibt auf deinem Handy. Am Empfang zeigst du nur die Angaben vor, die du freigibst.</p>
       <div class="journey" aria-label="Dein Weg zum Check-in">
-        <span><b>01 · Rechner</b> Issuer hosten</span><span><b>02 · Handy</b> Ausweis erhalten</span><span><b>03 · Fernseher</b> Einchecken</span>
+        <span><b>01 · Laptop</b> Organisation einrichten</span><span><b>02 · Handy</b> Ausweis erhalten</span><span><b>03 · Kiosk</b> Einchecken</span>
       </div>
       <div class="stack">
-        <a class="button" href="/wallet.html">Wallet einmalig einrichten</a>
-        <span id="wallet-hint" class="muted" hidden>Wallet öffnen – deine Wallet ist bereits angelegt.</span>
+        <a id="organisation-start" class="button" href="/issuer.html">Organisation am Laptop einrichten</a>
+        <a id="wallet-start" class="button secondary" href="/wallet.html">Wallet auf dem Handy öffnen</a>
+        <span id="wallet-hint" class="muted" hidden>Deine Wallet ist in diesem Browser bereits angelegt.</span>
       </div>
     </section>
     <section class="card workshop-intro">
-      <h2>Dein Workshop in vier Schritten</h2>
+      <h2>Dein Workshop in fünf Schritten</h2>
       <ol class="guided-list">
-        <li><strong>Eigene Ausweisstelle betreiben.</strong> Starte auf deinem Linux-/WSL-Rechner den Issuer mit Docker und einem Cloudflare-Tunnel.</li>
-        <li><strong>Issuer-Setup abschließen.</strong> Registriere deinen Issuer. Die Moderation vergleicht den Schlüsselfingerabdruck, ordnet ihn dir zu und kennzeichnet ihn als vertrauenswürdig.</li>
-        <li><strong>Ausstellen und annehmen.</strong> Scanne den Angebots-QR deines Rechners. Nutze deine vorhandene Wallet oder richte sie beim ersten Mal ein. Gib den Ausgabecode vom Notebook in der Wallet ein und signiere danach bewusst am Rechner.</li>
-        <li><strong>Am Empfang einchecken.</strong> Scanne den großen Empfangs-QR am Fernseher und entscheide, welche Angaben öffentlich in der Check-in-Liste erscheinen.</li>
+        <li><strong>Organisation anlegen.</strong> Öffne die Organisationseinrichtung auf deinem Laptop und trage den Namen deiner Demo-Organisation ein. Du brauchst weder Docker noch einen Admin-Token. Der Zugang wird in diesem Browser gemerkt.</li>
+        <li><strong>Bestätigung abwarten.</strong> Der Host bestätigt deine Organisation in seiner Verwaltung. Jede Organisation hat einen eigenen Ausstellerschlüssel; einzelne Ausweise brauchen keine Host-Freigabe.</li>
+        <li><strong>Mitarbeiterausweis vorbereiten.</strong> Gib Vor- und Nachname ein und wähle Mitarbeitende, Teamleitung oder Gast. Der Organisationsname ist fest vorgegeben. Erzeuge das QR-Angebot.</li>
+        <li><strong>Auf dem Handy empfangen.</strong> Scanne das Angebot in der Wallet oder PWA. Beim ersten Mal wird die Wallet-Einrichtung vorgeschaltet. Gib den Ausgabecode vom Laptop ein; der Ausweis wird automatisch signiert und kann gespeichert werden.</li>
+        <li><strong>Am Empfang einchecken.</strong> Scanne den großen Empfangs-QR mit der Kamera in deiner Wallet und entscheide, welche Angaben öffentlich in der Check-in-Liste erscheinen.</li>
       </ol>
-      <p>Du brauchst keinen Issuer auf diesem Handy. Die Anleitung für deinen Rechner stellt die Moderation bereit.</p>
+      <p>Für Teilnehmende läuft alles im Browser. Den privaten Host-Adminzugang brauchst du nicht. Verlierst du den Browserzugang zu deiner Organisation, kann nur der Host ihn wiederherstellen.</p>
       <div data-explain="trust"></div>
     </section>
     <section class="card info">
-      <h2>Alle QR-Links im selben Browser öffnen</h2>
-      <p>Öffne alle QR-Links im <strong>selben Browser</strong>: auf dem iPhone meist Safari, auf Android meist Chrome. Im privaten Modus können deine Daten beim Schließen verloren gehen.</p>
-      <p>Eine Installation ist nicht nötig. Wenn du die PWA zum Home-Bildschirm hinzufügst, kann sie auf iOS einen <strong>eigenen Speicher</strong> haben. Für den Kamera-QR-Ablauf empfehlen wir deshalb den Browser. Falls du die PWA nutzt, übertrage den Ausstellungs- oder Empfangslink über „QR-Link öffnen“ in der Wallet.</p>
+      <h2>QR-Codes direkt in der Wallet scannen</h2>
+      <p>Öffne auf deinem Handy die Wallet und wähle <strong>„QR-Code scannen“</strong>. So bleibst du auch in der installierten PWA und musst nicht zur externen Kamera-App wechseln. Die Kamera wird erst nach deinem Klick gestartet.</p>
+      <p>Bleibe für deine Ausweise im <strong>selben Browser oder derselben PWA</strong>. Auf iOS kann eine installierte PWA eigenen Speicher haben; eine zuvor in Safari angelegte Wallet wird nicht automatisch übertragen. Nutze die PWA deshalb möglichst von Anfang an. Im privaten Modus können Schlüssel beim Schließen verloren gehen.</p>
       <button id="install" class="secondary" type="button" hidden>Demo als PWA installieren</button>
       <p class="muted">Auf iOS: Teilen → Zum Home-Bildschirm. Die Installation ist optional.</p>
       <div data-explain="real"></div>

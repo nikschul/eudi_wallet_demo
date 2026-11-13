@@ -1,0 +1,23 @@
+.wallet-scanner {
+  position: relative;
+}
+
+.wallet-scanner video {
+  display: block;
+  width: 100%;
+  max-height: 60vh;
+  aspect-ratio: 3 / 4;
+  object-fit: contain;
+  background: #102b28;
+  border-radius: 1rem;
+}
+
+.wallet-scanner .scanner-status {
+  min-height: 3em;
+}
+
+.wallet-scanner .scanner-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .75rem;
+}

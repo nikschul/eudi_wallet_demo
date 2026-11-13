@@ -24,25 +24,33 @@
       <div id="qr-stage" class="qr-stage">
         <div class="qr-frame"><img id="checkin-qr" width="640" height="640" alt="QR-Code zum Check-in mit der Wallet" hidden><span id="qr-loading">QR-Code wird erstellt …</span></div>
         <a id="checkin-link" class="qr-link" href="/wallet.html">Check-in-Link öffnen</a>
-        <ol class="kiosk-instructions"><li>Kamera öffnen</li><li>QR-Code scannen</li><li>Angaben freigeben</li></ol>
+        <ol class="kiosk-instructions"><li>Wallet/PWA öffnen</li><li>„QR-Code scannen“ wählen</li><li>Angaben freigeben</li></ol>
       </div>
       <div id="kiosk-result" class="kiosk-result" role="status" hidden></div>
-      <aside class="onboarding-qr"><img id="start-qr" width="88" height="88" alt="QR-Code zur Startseite" hidden><div><strong>Wallet öffnen</strong><p>Für die Ersteinrichtung auf dem Handy</p><span id="public-url" class="muted"></span></div></aside>
+      <aside class="onboarding-qr organisation-setup">
+        <img id="issuer-setup-qr" width="112" height="112" alt="Öffentlicher QR-Code zur Organisationseinrichtung am Laptop" hidden>
+        <div><strong>Organisation einrichten · am Laptop</strong>
+          <p>Diese öffentliche Adresse am Laptop öffnen, Organisation registrieren und auf die Host-Freigabe warten. Kein eigener Server oder Tunnel nötig.</p>
+          <a id="issuer-setup-link" class="organisation-setup-link" href="/issuer.html">/issuer.html</a>
+          <button id="copy-issuer-setup" type="button" class="secondary" disabled>Adresse kopieren</button>
+          <p class="muted">Erst der spätere Ausweisangebots-QR öffnet die Wallet am Handy: einmal einrichten, Code eingeben, dann den Ausweis automatisch empfangen. Danach oben einchecken.</p>
+        </div>
+      </aside>
     </section>
     <aside class="kiosk-sidebar">
       <section class="card progress-panel">
         <h2>Workshop-Übersicht</h2>
         <div id="progress-stats" class="progress-stats" aria-live="polite">
-          <div><strong id="registered-count">–</strong><span>Registrierte Issuer</span></div>
+          <div><strong id="registered-count">–</strong><span>Registrierte Organisationen</span></div>
           <div><strong id="checkin-count">–</strong><span>Erfolgreiche Check-ins</span></div>
         </div>
-        <label class="field issuer-search" for="issuer-search">Issuer suchen
+        <label class="field issuer-search" for="issuer-search">Organisation suchen
           <input id="issuer-search" type="search" placeholder="Name, DID oder Fingerabdruck" autocomplete="off" aria-controls="progress-list">
         </label>
-        <p class="muted list-hint">Registrierung ist kein Vertrauen; keine Freigabe einzelner Ausweise.</p>
-        <ul id="progress-list" class="progress-list" tabindex="0" aria-label="Registrierte Issuer"></ul>
-        <p id="issuer-empty" class="muted list-hint">Noch kein Issuer registriert.</p>
-        <p id="issuer-no-match" class="muted list-hint" hidden>Keine passenden Issuer. Suche ändern oder leeren.</p>
+        <p class="muted list-hint">Alle Organisationen, auch ausstehende und gesperrte. Jeder erfolgreiche Besuch zählt, auch wiederholte Check-ins. Registrierung ist keine Freigabe; keine Freigabe einzelner Ausweise.</p>
+        <ul id="progress-list" class="progress-list" tabindex="0" aria-label="Registrierte Organisationen"></ul>
+        <p id="issuer-empty" class="muted list-hint">Noch keine Organisation registriert.</p>
+        <p id="issuer-no-match" class="muted list-hint" hidden>Keine passenden Organisationen. Suche ändern oder leeren.</p>
       </section>
       <section class="card activity-panel">
         <h2>Check-in-Versuche</h2>

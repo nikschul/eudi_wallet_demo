@@ -96,7 +96,7 @@ test('API network failures and unreadable responses are explicit', async (t) => 
   await assert.rejects(api('/config'), /keine lesbare Antwort/);
 });
 
-test('Issuer requests carry only the offer capability and use the registered origin', async (t) => {
+test('Public offer requests carry only the offer capability and omit organisation cookies', async (t) => {
   t.mock.method(globalThis, 'fetch', async (url, options) => {
     assert.equal(url, 'https://issuer.example.org/api/offers/example/claim');
     assert.equal(options.headers['X-Offer-Token'], 'offer-capability');
@@ -107,6 +107,26 @@ test('Issuer requests carry only the offer capability and use the registered ori
   assert.equal((await api('/offers/example/claim', {
     baseUrl: 'https://issuer.example.org', offerToken: 'offer-capability', body: { proof: 'public-proof' },
   })).status, 'bound');
+});
+
+test('Organisation requests explicitly use the same-origin browser session without a host token', async (t) => {
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    assert.equal(url, '/api/issuer/session');
+    assert.equal(options.credentials, 'same-origin');
+    assert.deepEqual(options.headers, { Accept: 'application/json' });
+    assert.equal(options.body, undefined);
+    return new Response('{"organisation":null,"roles":["Mitarbeitende","Teamleitung","Gast"]}');
+  });
+  assert.deepEqual(await api('/issuer/session', { credentials: 'same-origin' }), {
+    organisation: null, roles: ['Mitarbeitende', 'Teamleitung', 'Gast'],
+  });
+});
+
+test('API never enables cross-origin session cookies', async (t) => {
+  let called = false;
+  t.mock.method(globalThis, 'fetch', async () => { called = true; });
+  await assert.rejects(api('/issuer/session', { credentials: 'include' }), /Cookie-Modus/);
+  assert.equal(called, false);
 });
 
 test('Management token is sent explicitly as a header, never as a URL or request body', async (t) => {

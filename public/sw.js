@@ -1,7 +1,9 @@
-const CACHE = 'eudi-shell-v7';
+const CACHE = 'eudi-shell-v8';
 const SHELL = [
-  '/', '/index.html', '/wallet.html', '/kiosk.html', '/admin.html',
-  '/styles.css', '/index.js', '/wallet.js', '/kiosk.js', '/admin.js',
+  '/', '/index.html', '/wallet.html', '/issuer.html', '/kiosk.html', '/admin.html',
+  '/styles.css', '/index.js', '/wallet.js', '/issuer.js', '/issuer.css', '/kiosk.js', '/admin.js',
+  '/wallet-scanner.js', '/wallet-scanner.css',
+  '/vendor/qr-scanner/qr-scanner.min.js', '/vendor/qr-scanner/qr-scanner-worker.min.js',
   '/lib/ui.js', '/lib/management.js', '/lib/texts.js', '/lib/sdjwt.js', '/lib/protocol.js', '/lib/credential-status.js', '/manifest.webmanifest',
   '/icons/wallet.svg', '/icons/icon-192.png', '/icons/icon-512.png', '/icons/apple-touch-icon.png',
 ];

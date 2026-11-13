@@ -1,125 +1,54 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { once } from 'node:events';
-import { createServer } from 'node:http';
-import { deflateSync } from 'node:zlib';
-import { createApp } from '../server/app.js';
 import * as sd from '../public/lib/sdjwt.js';
-import { EMPLOYEE_VCT, REGISTRATION_PROOF, signProof } from '../public/lib/protocol.js';
-import { STATUS_LIST_ENTRIES, STATUS_LIST_TTL } from '../public/lib/credential-status.js';
+import { fixture, noSecrets } from './helpers/hosted.js';
+import { ROLES, EMPLOYEE_VCT } from '../public/lib/protocol.js';
+import { createApp } from '../server/app.js';
 
-async function fixture(t, options = {}) {
-  const directory = await mkdtemp(path.join(tmpdir(), 'eudi-test-'));
-  t.after(() => rm(directory, { recursive: true, force: true }));
-  const start = async () => {
-    const { app, adminToken } = await createApp({
-      publicUrl: 'http://localhost:3000', dataDirectory: directory, ...options,
-    });
-    const server = app.listen(0, '127.0.0.1');
-    await once(server, 'listening');
-    t.after(() => new Promise((resolve) => server.close(resolve)));
-    const base = `http://127.0.0.1:${server.address().port}`;
-    const api = async (route, body) => {
-      const response = await fetch(`${base}/api${route}`, {
-        method: body === undefined ? 'GET' : 'POST',
-        headers: { 'Content-Type': 'application/json',
-          ...(route.startsWith('/admin/') ? { 'X-Admin-Token': adminToken } : {}) },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      });
-      return { status: response.status, data: await response.json() };
-    };
-    return { api, base, server };
-  };
-  return { ...await start(), start };
-}
-
-async function register(api, issuer, updates = {}) {
-  const challenge = (await api('/issuers/challenge', {})).data;
-  const proof = await signProof(REGISTRATION_PROOF, {
-    iss: issuer.did, aud: challenge.aud, nonce: challenge.nonce,
-    name: 'Meine Ausweisstelle', employeeName: 'Erika', publicUrl: 'https://issuer.example.org', ...updates,
-  }, issuer.privateJwk);
-  return api('/issuers', { challengeId: challenge.id, proof });
-}
-
-async function person(t, api, name = 'Erika', extra = {}, approved = true) {
-  const issuer = await sd.generateKeyPair();
-  const holder = await sd.generateKeyPair();
-  const statusState = { revoked: false, unavailable: false, expired: false, beforeResponse: null };
-  let publicUrl;
-  const server = createServer(async (req, res) => {
-    if (statusState.unavailable) { res.writeHead(503).end(); return; }
-    if (statusState.beforeResponse) await statusState.beforeResponse();
-    const bytes = new Uint8Array(STATUS_LIST_ENTRIES / 8);
-    if (statusState.revoked) bytes[0] = 1;
-    const iat = Math.floor(Date.now() / 1000) - (statusState.expired ? 60 : 0);
-    const token = await sd.signJwt({ alg: 'ES256', typ: 'statuslist+jwt' }, {
-      iss: issuer.did, sub: `${publicUrl}/api/status-list`, iat, exp: iat + STATUS_LIST_TTL, ttl: STATUS_LIST_TTL,
-      status_list: { bits: 1, lst: sd.b64url(deflateSync(bytes)) },
-    }, issuer.privateJwk);
-    res.writeHead(200, { 'Content-Type': 'application/statuslist+jwt' }).end(token);
-  }).listen(0, '127.0.0.1');
-  await once(server, 'listening');
-  publicUrl = `http://127.0.0.1:${server.address().port}`;
-  t.after(() => new Promise((resolve) => {
-    server.close(resolve);
-    server.closeAllConnections();
-  }));
-  const registered = await register(api, issuer, { name: `${name}s Ausweisstelle`, employeeName: name, publicUrl });
-  assert.equal(registered.status, 201, JSON.stringify(registered.data));
-  assert.equal(registered.data.trusted, false);
-  if (approved) {
-    assert.equal((await api(`/admin/issuers/${encodeURIComponent(issuer.did)}/trust`, { trusted: true, ownerName: name })).status, 200);
-  }
-  const credential = await sd.issueSdJwt({
-    issuerDid: issuer.did, issuerPrivateJwk: issuer.privateJwk, holderPublicJwk: holder.publicJwk,
-    vct: EMPLOYEE_VCT, claims: {
-      given_name: name, family_name: 'Müller', organisation: 'ISST', role: 'Mitarbeitende',
-    },
-    status: { status_list: { idx: 0, uri: `${publicUrl}/api/status-list` } },
-    ...extra,
-  });
-  return {
-    issuer, holder, credential, statusState,
-    async checkIn(reveal = ['given_name', 'family_name']) {
-      const created = await api('/requests', {});
-      assert.equal(created.status, 201);
-      const request = (await api(`/requests/${created.data.id}`)).data;
-      const presentation = await sd.createPresentation({
-        sdjwt: credential, reveal, holderPrivateJwk: holder.privateJwk, aud: request.aud, nonce: request.nonce,
-      });
-      return { request, presentation, result: await api(`/requests/${request.id}/response`, { presentation }) };
-    },
-  };
-}
-
-test('Public config includes HTTPS QR codes and static pages are served', async (t) => {
-  const { api, base } = await fixture(t, { publicUrl: 'https://wallet.example.org' });
-  const { data } = await api('/config');
-  assert.equal(data.publicUrl, 'https://wallet.example.org');
-  assert.match(data.startQrDataUrl, /^data:image\/png;base64,/);
-  const created = (await api('/requests', {})).data;
-  assert.equal(created.url, `https://wallet.example.org/wallet.html#req=${created.id}`);
+test('Hosted public config has shared-origin setup QR, pages, verifier name and safe static package routes', async (t) => {
+  const f = await fixture(t, { publicUrl: 'https://workshop.example.org' });
+  assert.deepEqual((await f.call('/api/health')).data, { ok: true, role: 'workshop' });
+  const config = (await f.call('/api/config')).data;
+  assert.equal(config.publicUrl, 'https://workshop.example.org');
+  assert.equal(config.issuerSetupUrl, 'https://workshop.example.org/issuer.html');
+  assert.equal(config.verifierName, 'Fraunhofer ISST – Empfang');
+  assert.deepEqual(config.roles, ROLES);
+  for (const key of ['startQrDataUrl', 'issuerSetupQrDataUrl']) assert.match(config[key], /^data:image\/png;base64,/);
+  noSecrets(config);
+  const created = (await f.call('/api/requests', { body: {} })).data;
+  assert.equal(created.url, `https://workshop.example.org/wallet.html#req=${created.id}`);
   assert.match(created.qrDataUrl, /^data:image\/png;base64,/);
-  const page = await fetch(`${base}/`);
-  assert.equal(page.status, 200);
-  assert.match(await page.text(), /EUDI/);
-  const wallet = await (await fetch(`${base}/wallet.html`)).text();
-  assert.match(wallet, /name="wallet-origin" content="https:\/\/wallet\.example\.org"/);
-  const issuer = await sd.generateKeyPair();
-  assert.equal((await register(api, issuer, { publicUrl: 'http://localhost:3001' })).status, 400);
+  for (const route of ['/', '/issuer.html', '/wallet.html', '/admin.html', '/kiosk.html']) {
+    const page = await f.call(route);
+    assert.equal(page.status, 200);
+    assert.match(page.headers.get('content-security-policy'), /frame-ancestors 'none'/);
+    assert.doesNotMatch(page.headers.get('content-security-policy'), /https?:\/\//);
+  }
+  const wallet = await f.call('/wallet.html');
+  assert.equal(wallet.headers.get('permissions-policy'), 'camera=(self)');
+  assert.match(wallet.headers.get('content-security-policy'), /media-src 'self' blob:/);
+  assert.match(wallet.headers.get('content-security-policy'), /worker-src 'self'/);
+  assert.match(wallet.data, /name="wallet-origin" content="https:\/\/workshop\.example\.org"/);
+  assert.deepEqual(JSON.parse(wallet.headers.get('x-workshop-issuer-origins')), [config.publicUrl]);
+  for (const route of ['/vendor/qr-scanner/qr-scanner.min.js', '/vendor/qr-scanner/qr-scanner-worker.min.js']) {
+    assert.equal((await f.call(route)).status, 200, route);
+  }
+  for (const route of ['/vendor/qr-scanner/package.json', '/vendor/qr-scanner/../../package.json',
+    '/package.json', '/hosted-state.json', '/.env.issuer', '/data/identity.json']) {
+    assert.equal((await f.call(route)).status, 404, route);
+  }
 });
 
 test('PWA manifest, offline shell and real PNG icons are available without caching APIs', async (t) => {
-  const { base } = await fixture(t);
-  const manifest = await (await fetch(`${base}/manifest.webmanifest`)).json();
-  assert.equal(manifest.display, 'standalone');
-  assert.equal(manifest.start_url, '/wallet.html');
-  for (const icon of manifest.icons) {
-    const response = await fetch(`${base}${icon.src}`);
+  const f = await fixture(t);
+  const manifest = (await f.call('/manifest.webmanifest')).data;
+  const parsed = typeof manifest === 'string' ? JSON.parse(manifest) : manifest;
+  assert.equal(parsed.display, 'standalone');
+  assert.equal(parsed.start_url, '/wallet.html');
+  for (const icon of parsed.icons) {
+    const response = await fetch(`${f.base}${icon.src}`);
     assert.equal(response.headers.get('content-type'), 'image/png');
     const bytes = Buffer.from(await response.arrayBuffer());
     assert.equal(bytes.subarray(1, 4).toString(), 'PNG');
@@ -127,332 +56,286 @@ test('PWA manifest, offline shell and real PNG icons are available without cachi
     assert.equal(bytes.readUInt32BE(16), size);
     assert.equal(bytes.readUInt32BE(20), size);
   }
-  const sw = await (await fetch(`${base}/sw.js`)).text();
+  const sw = (await f.call('/sw.js')).data;
   const shell = sw.match(/const SHELL = \[([\s\S]*?)\];/)[1];
-  const paths = [...shell.matchAll(/'([^']+)'/g)].map((match) => match[1]);
-  assert.equal(paths.some((route) => route.startsWith('/api')), false);
-  for (const route of paths) {
-    assert.equal((await fetch(`${base}${route}`)).status, 200, route);
-  }
-  const config = await fetch(`${base}/api/config`);
-  assert.equal(config.headers.get('cache-control'), 'no-store');
+  const routes = [...shell.matchAll(/'([^']+)'/g)].map((match) => match[1]);
+  assert.equal(routes.some((route) => route.startsWith('/api')), false);
+  for (const route of routes) assert.equal((await f.call(route)).status, 200, route);
+  assert.equal((await f.call('/api/config')).headers.get('cache-control'), 'no-store');
 });
 
-test('Ten check-ins, selective disclosure, deduplication and restart persistence', async (t) => {
-  const { api, start } = await fixture(t);
-  const guest = await person(t, api);
+test('Ten check-ins preserve selective disclosure, history and distinct organisation versus visit metrics across restart', async (t) => {
+  const f = await fixture(t);
+  const a = await f.organisation('Example Org');
+  await f.organisation('Pending org also counts');
+  const credential = await f.issue(a);
   for (let index = 0; index < 10; index++) {
-    const { request, presentation, result } = await guest.checkIn();
-    assert.equal(result.data.ok, true);
+    const { request, presentation, result } = await f.checkIn(credential);
+    assert.equal(result.data.ok, true, result.data.error);
     assert.equal(result.data.steps.length, 8);
     assert.deepEqual(Object.keys(result.data.claims).sort(), ['family_name', 'given_name']);
-    assert.equal((await api(`/requests/${request.id}`)).data.status, 'done');
-    assert.equal((await api(`/requests/${request.id}/response`, { presentation })).status, 409);
+    assert.equal((await f.call(`/api/requests/${request.id}`)).data.status, 'done');
+    assert.equal((await f.call(`/api/requests/${request.id}/response`, { body: { presentation } })).status, 409);
   }
-  assert.equal((await api('/attendees')).data.length, 1);
-  assert.equal((await api('/attendees')).data[0].checkins.length, 10);
-  assert.equal('organisation' in (await api('/attendees')).data[0], false);
-  const optional = await guest.checkIn(['given_name', 'family_name', 'organisation', 'role']);
-  assert.equal(optional.result.data.claims.organisation, 'ISST');
-  assert.equal((await api('/attendees')).data[0].organisation, 'ISST');
-  const history = (await api('/attendees')).data[0].checkins;
-  assert.equal(history.length, 11);
-  assert.deepEqual(Object.keys(history[0].claims).sort(), ['family_name', 'given_name']);
-  assert.equal(history[10].claims.role, 'Mitarbeitende');
-  assert.equal(history[0].credentialId, history[10].credentialId);
-  const optionalGuest = await person(t, api, 'Ada');
-  await optionalGuest.checkIn(['given_name', 'family_name', 'organisation', 'role']);
-  assert.deepEqual((await api('/dashboard')).data.stats, { registered: 2, checkins: 12 });
-  const restarted = await start();
-  assert.equal((await restarted.api('/issuers')).data[0].did, guest.issuer.did);
-  assert.equal((await restarted.api('/attendees')).data.find((entry) => entry.name === 'Ada Müller').organisation, 'ISST');
-  assert.equal((await restarted.api(`/requests/${optional.request.id}`)).status, 404);
+  const attendees = (await f.call('/api/attendees')).data;
+  assert.equal(attendees.length, 1);
+  assert.equal(attendees[0].checkins.length, 10);
+  assert.equal(attendees[0].organisation, undefined);
+  assert.equal(attendees[0].claims.role, undefined);
+  noSecrets(attendees);
+  const dashboard = (await f.call('/api/dashboard')).data;
+  assert.deepEqual(dashboard.stats, { registered: 2, checkins: 10 });
+  assert.equal(dashboard.issuers.find((entry) => entry.id === a.org.id).checkinCount, 10);
+  assert.equal(dashboard.attendees.length, 1);
+  await f.trust(a.org, false);
+  assert.deepEqual((await f.call('/api/dashboard')).data.stats, dashboard.stats);
+  await f.restart();
+  assert.deepEqual((await f.call('/api/dashboard')).data.stats, dashboard.stats);
+  assert.deepEqual((await f.call('/api/dashboard')).data.attempts, []);
+  await f.trust(a.org);
+  const optional = await f.checkIn(credential, ['given_name', 'family_name', 'organisation', 'role']);
+  assert.equal(optional.result.data.ok, true);
+  assert.equal(optional.result.data.claims.organisation, a.org.name);
+  const history = (await f.call('/api/attendees')).data[0].checkins;
+  assert.equal(history[0].claims.organisation, undefined);
+  assert.equal(history.at(-1).claims.organisation, a.org.name);
 });
 
-test('Manual trust, authenticated moderation, replay and reset', async (t) => {
-  const { api } = await fixture(t, { trustMode: 'manual' });
-  const guest = await person(t, api, 'Erika', {}, false);
-  assert.equal((await api('/admin/replay', {})).status, 409);
-  const denied = await guest.checkIn();
-  assert.equal(denied.result.data.ok, false);
-  assert.match(denied.result.data.error, /Vertrauensliste/);
-  assert.equal((await api(`/requests/${denied.request.id}`)).data.status, 'error');
-  const trustPath = `/admin/issuers/${encodeURIComponent(guest.issuer.did)}/trust`;
-  assert.equal((await api(trustPath, { trusted: true })).status, 400);
-  assert.equal((await api(trustPath, { trusted: true, ownerName: 'Erika Müller' })).status, 200);
-  assert.equal((await guest.checkIn()).result.data.ok, true);
-  const replay = await api('/admin/replay', {});
+test('Manual trust, authenticated moderation, replay and reset retain organisations and credential ledger', async (t) => {
+  const f = await fixture(t);
+  const tenant = await f.organisation();
+  assert.equal((await f.call('/api/admin/reset', { body: {} })).status, 401);
+  assert.equal((await f.call('/api/admin/replay', { admin: true, body: {} })).status, 409);
+  const credential = await f.issue(tenant);
+  assert.equal((await f.checkIn(credential)).result.data.ok, true);
+  const replay = await f.call('/api/admin/replay', { admin: true, body: {} });
   assert.equal(replay.data.ok, false);
   assert.match(replay.data.error, /Nonce/);
-  assert.equal((await api('/attendees')).data.length, 1);
-  assert.equal((await api('/admin/trust-mode', { mode: 'auto' })).status, 400);
-  assert.equal((await api('/config')).data.trustMode, 'manual');
-  assert.equal((await api('/admin/reset', {})).status, 200);
-  assert.deepEqual((await api('/attendees')).data, []);
-  assert.deepEqual((await api('/dashboard')).data.attempts, []);
-  assert.equal((await api('/issuers')).data.length, 1);
-  assert.equal((await api(`/requests/${denied.request.id}`)).status, 404);
+  assert.equal((await f.call('/api/admin/trust-mode', { admin: true, body: { mode: 'auto' } })).status, 400);
+  assert.deepEqual((await f.call('/api/admin/trust-mode', { admin: true, body: { mode: 'manual' } })).data, { mode: 'manual' });
+  assert.equal((await f.call('/api/admin/reset', { admin: true, body: {} })).status, 200);
+  assert.deepEqual((await f.call('/api/dashboard')).data.stats, { registered: 1, checkins: 0 });
+  assert.deepEqual((await f.call('/api/attendees')).data, []);
+  assert.equal((await tenant.owner('/credentials')).data.length, 1);
+  assert.equal((await f.call('/api/admin/replay', { admin: true, body: {} })).status, 409);
 });
 
 test('Requests expire after five minutes and unknown requests return 404', async (t) => {
-  let time = Date.now();
-  const { api } = await fixture(t, { clock: () => time });
-  const { data } = await api('/requests', {});
-  time += 300000;
-  assert.equal((await api(`/requests/${data.id}`)).data.status, 'expired');
-  assert.equal((await api(`/requests/${data.id}/response`, { presentation: 'invalid' })).status, 410);
-  assert.equal((await api('/requests/missing')).status, 404);
+  const f = await fixture(t);
+  const created = (await f.call('/api/requests', { body: {} })).data;
+  f.advance(300000);
+  assert.equal((await f.call(`/api/requests/${created.id}`)).data.status, 'expired');
+  assert.equal((await f.call(`/api/requests/${created.id}/response`, { body: { presentation: 'invalid' } })).status, 410);
+  assert.equal((await f.call('/api/requests/missing')).status, 404);
 });
 
 test('Concurrent responses consume a QR exactly once', async (t) => {
-  const { api } = await fixture(t);
-  const guest = await person(t, api);
-  const created = (await api('/requests', {})).data;
-  const request = (await api(`/requests/${created.id}`)).data;
+  const f = await fixture(t);
+  const credential = await f.issue(await f.organisation());
+  const request = (await f.call('/api/requests', { body: {} })).data;
+  const info = (await f.call(`/api/requests/${request.id}`)).data;
   const presentation = await sd.createPresentation({
-    sdjwt: await sd.issueSdJwt({
-      issuerDid: guest.issuer.did, issuerPrivateJwk: guest.issuer.privateJwk,
-      holderPublicJwk: guest.holder.publicJwk, vct: request.vct,
-      claims: { given_name: 'Erika', family_name: 'Müller' },
-      status: sd.describeCredential(guest.credential).payload.status,
-    }),
-    reveal: request.required, holderPrivateJwk: guest.holder.privateJwk, aud: request.aud, nonce: request.nonce,
+    sdjwt: credential.sdjwt, reveal: info.required, holderPrivateJwk: credential.holder.privateJwk,
+    aud: info.aud, nonce: info.nonce,
   });
-  const responses = await Promise.all([
-    api(`/requests/${request.id}/response`, { presentation }),
-    api(`/requests/${request.id}/response`, { presentation }),
-  ]);
-  assert.deepEqual(responses.map((response) => response.status).sort(), [200, 409]);
-  assert.equal((await api('/attendees')).data.length, 1);
+  const results = await Promise.all([1, 2].map(() => f.call(`/api/requests/${request.id}/response`, { body: { presentation } })));
+  assert.deepEqual(results.map((result) => result.status).sort(), [200, 409]);
+  assert.deepEqual((await f.call('/api/dashboard')).data.stats, { registered: 1, checkins: 1 });
 });
 
-test('Twenty phones share a kiosk QR but get unique single-use nonces and identifiable results', async (t) => {
-  const { api, start } = await fixture(t);
-  const people = await Promise.all(Array.from({ length: 20 }, (_, index) => (
-    person(t, api, `Person ${index + 1}`, {}, index < 10)
-  )));
-  const kiosk = (await api('/requests', { mode: 'kiosk' })).data;
-  assert.equal((await api(`/requests/${kiosk.id}/response`, { presentation: 'invalid' })).status, 409);
-  const sessions = await Promise.all(people.map(() => api(`/requests/${kiosk.id}/sessions`, {})));
+test('Twenty phones share a kiosk QR but get unique single-use nonces and identifiable verified/unverified results', async (t) => {
+  const f = await fixture(t);
+  const tenant = await f.organisation();
+  const people = [];
+  for (let index = 0; index < 20; index++) people.push(await f.issue(tenant));
+  const kiosk = (await f.call('/api/requests', { body: { mode: 'kiosk' } })).data;
+  assert.equal((await f.call(`/api/requests/${kiosk.id}/response`, { body: { presentation: 'invalid' } })).status, 409);
+  const sessions = await Promise.all(people.map(() => f.call(`/api/requests/${kiosk.id}/sessions`, { body: {} })));
   assert.ok(sessions.every((session) => session.status === 201));
   assert.equal(new Set(sessions.map((session) => session.data.nonce)).size, 20);
-  const before = (await api('/dashboard')).data;
-  assert.deepEqual(before.stats, { registered: 20, checkins: 0 });
-  assert.deepEqual(before.attempts, []);
+  const records = (await tenant.owner('/credentials')).data;
+  for (const record of records.slice(10)) await tenant.owner(`/credentials/${record.id}/revoke`, {});
   const results = await Promise.all(sessions.map(async ({ data: request }, index) => {
     const presentation = await sd.createPresentation({
-      sdjwt: people[index].credential, reveal: request.required, holderPrivateJwk: people[index].holder.privateJwk,
+      sdjwt: people[index].sdjwt, reveal: request.required, holderPrivateJwk: people[index].holder.privateJwk,
       aud: request.aud, nonce: request.nonce,
     });
-    const result = await api(`/requests/${request.id}/response`, { presentation });
-    assert.equal((await api(`/requests/${request.id}/response`, { presentation })).status, 409);
-    return result;
+    const response = await f.call(`/api/requests/${request.id}/response`, { body: { presentation } });
+    assert.equal((await f.call(`/api/requests/${request.id}/response`, { body: { presentation } })).status, 409);
+    return response;
   }));
   assert.equal(results.filter((result) => result.data.ok).length, 10);
-  assert.equal((await api(`/requests/${kiosk.id}`)).data.status, 'pending');
-  const dashboard = (await api('/dashboard')).data;
-  assert.deepEqual(dashboard.stats, { registered: 20, checkins: 10 });
+  assert.equal((await f.call(`/api/requests/${kiosk.id}`)).data.status, 'pending');
+  const dashboard = (await f.call('/api/dashboard')).data;
+  assert.deepEqual(dashboard.stats, { registered: 1, checkins: 10 });
   assert.equal(dashboard.attempts.length, 20);
-  assert.equal(new Set(dashboard.attempts.map((attempt) => attempt.id)).size, 20);
+  assert.equal(new Set(dashboard.attempts.map((entry) => entry.id)).size, 20);
   for (const [index, session] of sessions.entries()) {
     const attempt = dashboard.attempts.find((entry) => entry.id === session.data.id);
-    assert.equal(attempt.name, `Person ${index + 1} Müller`);
-    assert.equal(attempt.issuerName, `Person ${index + 1}s Ausweisstelle`);
+    assert.equal(attempt.name, 'Erika Muster');
+    assert.equal(attempt.issuerName, tenant.org.name);
     assert.equal(attempt.identityVerified, index < 10);
     assert.equal(attempt.status, index < 10 ? 'done' : 'error');
-    if (index >= 10) {
-      assert.equal(attempt.failedAt, 'Issuer-Vertrauen');
-      assert.match(attempt.error, /Vertrauensliste/);
-    }
+    if (index >= 10) assert.equal(attempt.failedAt, 'Widerrufsstatus');
   }
-  for (const hidden of ['privateJwk', 'sdjwt', 'presentation', 'nonce', '"organisation"', '"role"']) {
-    assert.equal(JSON.stringify(dashboard).includes(hidden), false, hidden);
-  }
-  const restarted = (await (await start()).api('/dashboard')).data;
-  assert.deepEqual(restarted.stats, dashboard.stats);
-  assert.deepEqual(restarted.attempts, []);
+  noSecrets(dashboard);
 });
 
-test('Rejected identities remain explicitly unverified and expose the exact failing step, not hidden claims', async (t) => {
-  const { api } = await fixture(t);
-  const guest = await person(t, api);
-  const { request, presentation } = await guest.checkIn();
+test('Rejected identities are explicitly unverified with exact failing step, without logging raw presentations', async (t) => {
+  const f = await fixture(t);
+  const credential = await f.issue(await f.organisation());
+  const { presentation } = await f.checkIn(credential);
   const parts = presentation.split('~');
   parts[1] = sd.jsonB64(['salt', 'given_name', 'Ungeprüfter Name']);
-  const changedRequest = (await api('/requests', {})).data;
-  const result = await api(`/requests/${changedRequest.id}/response`, { presentation: parts.join('~') });
+  const request = (await f.call('/api/requests', { body: {} })).data;
+  const result = await f.call(`/api/requests/${request.id}/response`, { body: { presentation: parts.join('~') } });
   assert.equal(result.data.ok, false);
   assert.equal(result.data.failedAt, 'Geteilte Angaben');
-  let latest = (await api('/dashboard')).data.attempts[0];
-  assert.equal(latest.identityVerified, false);
-  assert.equal(latest.name, 'Ungeprüfter Name Müller');
-  assert.match(latest.error, /Disclosure/);
-  assert.notEqual(latest.id, request.id);
-  const unreadable = (await api('/requests', {})).data;
-  await api(`/requests/${unreadable.id}/response`, { presentation: 'not-a-credential' });
-  latest = (await api('/dashboard')).data.attempts[0];
-  assert.equal(latest.name, 'Unbekannte Wallet');
-  assert.equal(latest.failedAt, 'Nachweis lesen');
-  assert.match(latest.identityNote, /nicht.*gelesen/);
+  const unreadable = (await f.call('/api/requests', { body: {} })).data;
+  await f.call(`/api/requests/${unreadable.id}/response`, { body: { presentation: 'not-a-credential' } });
+  const attempts = (await f.call('/api/dashboard')).data.attempts;
+  assert.equal(attempts[0].name, 'Unbekannte Wallet');
+  assert.equal(attempts[0].failedAt, 'Nachweis lesen');
+  assert.match(attempts[0].identityNote, /nicht.*gelesen/);
+  assert.equal(attempts[1].identityVerified, false);
+  assert.match(attempts[1].error, /Disclosure/);
+  assert.equal(JSON.stringify(attempts).includes('presentation'), false);
 });
 
 test('Kiosk sessions respect expiry and attempt history is bounded and resettable', async (t) => {
-  let time = Date.now();
-  const { api } = await fixture(t, { clock: () => time });
-  assert.equal((await api('/requests', { mode: 'invalid' })).status, 400);
-  const single = (await api('/requests', {})).data;
-  assert.equal((await api(`/requests/${single.id}/sessions`, {})).status, 400);
-  const kiosk = (await api('/requests', { mode: 'kiosk' })).data;
+  const f = await fixture(t);
+  assert.equal((await f.call('/api/requests', { body: { mode: 'invalid' } })).status, 400);
+  const single = (await f.call('/api/requests', { body: {} })).data;
+  assert.equal((await f.call(`/api/requests/${single.id}/sessions`, { body: {} })).status, 400);
+  const kiosk = (await f.call('/api/requests', { body: { mode: 'kiosk' } })).data;
   await Promise.all(Array.from({ length: 102 }, async () => {
-    const session = (await api(`/requests/${kiosk.id}/sessions`, {})).data;
-    await api(`/requests/${session.id}/response`, { presentation: 'invalid' });
+    const session = (await f.call(`/api/requests/${kiosk.id}/sessions`, { body: {} })).data;
+    await f.call(`/api/requests/${session.id}/response`, { body: { presentation: 'invalid' } });
   }));
-  assert.equal((await api('/dashboard')).data.attempts.length, 100);
-  time += 300000;
-  assert.equal((await api(`/requests/${kiosk.id}/sessions`, {})).status, 410);
-  assert.equal((await api('/admin/reset', {})).status, 200);
-  assert.deepEqual((await api('/dashboard')).data.attempts, []);
+  assert.equal((await f.call('/api/dashboard')).data.attempts.length, 100);
+  f.advance(300000);
+  assert.equal((await f.call(`/api/requests/${kiosk.id}/sessions`, { body: {} })).status, 410);
+  await f.call('/api/admin/reset', { admin: true, body: {} });
+  assert.deepEqual((await f.call('/api/dashboard')).data.attempts, []);
 });
 
-test('Wrong credential type and missing required names are rejected', async (t) => {
-  const { api } = await fixture(t);
-  const wrongType = await person(t, api, 'Typ', { vct: 'urn:other' });
-  assert.match((await wrongType.checkIn()).result.data.error, /Mitarbeiterausweis/);
-  const missing = await person(t, api, 'Feld', { claims: { given_name: 'Erika' } });
-  assert.match((await missing.checkIn()).result.data.error, /erforderlichen/);
-  assert.deepEqual((await api('/attendees')).data, []);
+test('Wrong type, missing names, legacy statusless and unrecorded credentials never check in', async (t) => {
+  const f = await fixture(t);
+  const tenant = await f.organisation();
+  const issued = await f.issue(tenant);
+  const state = JSON.parse(await readFile(path.join(f.directory, 'hosted-state.json'), 'utf8'));
+  const org = state.organisations[0];
+  const status = sd.describeCredential(issued.sdjwt).payload.status;
+  for (const [extra, expected] of [
+    [{ vct: 'urn:other' }, /Mitarbeiterausweis/],
+    [{ claims: { given_name: 'Erika' } }, /erforderlichen/],
+    [{ status: undefined }, /Widerrufsstatus/],
+    [{ status }, /Ausstellungsbeleg/],
+  ]) {
+    const sdjwt = await sd.issueSdJwt({
+      issuerDid: org.did, issuerPrivateJwk: org.privateJwk, holderPublicJwk: issued.holder.publicJwk,
+      vct: EMPLOYEE_VCT, claims: { given_name: 'Erika', family_name: 'Muster' }, status, ...extra,
+    });
+    const checked = await f.checkIn({ ...issued, sdjwt });
+    assert.equal(checked.result.data.ok, false);
+    assert.match(checked.result.data.error, expected);
+  }
+  assert.deepEqual((await f.call('/api/attendees')).data, []);
 });
 
-test('Signed issuer URL updates preserve approval; identity updates require renewed trust', async (t) => {
-  const { api, base } = await fixture(t, { trustMode: 'manual' });
-  const guest = await person(t, api);
-  const update = await register(api, guest.issuer, {
-    name: 'Erikas Ausweisstelle', employeeName: 'Erika', publicUrl: 'https://new-issuer.example.org',
+test('Issuer suspension and revocation during asynchronous verification prevent check-in; history remains', async (t) => {
+  const f = await fixture(t);
+  const tenant = await f.organisation();
+  const credential = await f.issue(tenant);
+  assert.equal((await f.checkIn(credential)).result.data.ok, true);
+  const original = crypto.subtle.verify;
+  let suspended = false;
+  t.mock.method(crypto.subtle, 'verify', async function (...args) {
+    const input = new TextDecoder().decode(args[3]);
+    if (!suspended && sd.parseB64Json(input.split('.')[0]).typ === 'statuslist+jwt') {
+      suspended = true;
+      await f.trust(tenant.org, false);
+    }
+    return original.apply(this, args);
   });
-  assert.equal(update.status, 200);
-  assert.equal(update.data.trusted, true);
-  const renamed = await register(api, guest.issuer, { name: 'Neuer Name' });
-  assert.equal(renamed.data.trusted, false);
-  assert.equal(renamed.data.ownerName, null);
-  assert.equal((await api('/issuers', { did: 'did:jwk:broken', name: 'Invalid' })).status, 400);
-  assert.equal((await api('/issuers', { did: guest.issuer.did, name: 'Name', privateJwk: {} })).status, 400);
-  assert.equal((await api('/admin/trust-mode', { mode: 'invalid' })).status, 400);
-  const invalid = await fetch(`${base}/api/issuers`, {
+  const denied = await f.checkIn(credential);
+  assert.equal(suspended, true);
+  assert.equal(denied.result.data.ok, false);
+  assert.equal(denied.result.data.failedAt, 'Issuer-Vertrauen');
+  assert.match(denied.result.data.error, /während der Prüfung/);
+  t.mock.restoreAll();
+  await f.trust(tenant.org);
+  const record = (await tenant.owner('/credentials')).data[0];
+  let revoked = false;
+  t.mock.method(crypto.subtle, 'verify', async function (...args) {
+    const input = new TextDecoder().decode(args[3]);
+    if (!revoked && sd.parseB64Json(input.split('.')[0]).typ === 'statuslist+jwt') {
+      revoked = true;
+      await tenant.owner(`/credentials/${record.id}/revoke`, {});
+    }
+    return original.apply(this, args);
+  });
+  const revokedResult = await f.checkIn(credential);
+  assert.equal(revoked, true);
+  assert.equal(revokedResult.result.data.ok, false);
+  assert.equal(revokedResult.result.data.failedAt, 'Widerrufsstatus');
+  assert.deepEqual((await f.call('/api/dashboard')).data.stats, { registered: 1, checkins: 1 });
+  assert.equal((await f.call('/api/attendees')).data[0].checkins.length, 1);
+});
+
+test('Page aliases preserve query; malformed JSON and obsolete APIs fail explicitly', async (t) => {
+  const f = await fixture(t);
+  for (const name of ['wallet', 'issuer', 'kiosk', 'admin']) {
+    const response = await fetch(`${f.base}/${name}?req=example`, { redirect: 'manual' });
+    assert.equal(response.status, 302);
+    assert.equal(response.headers.get('location'), `/${name}.html?req=example`);
+  }
+  for (const route of ['/api/issuers', '/api/issuers/challenge']) {
+    assert.equal((await f.call(route, { body: {} })).status, 404);
+  }
+  const invalid = await fetch(`${f.base}/api/organisations`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{',
   });
   assert.equal(invalid.status, 400);
   assert.match((await invalid.json()).error, /JSON/);
+  const oversized = await f.call('/api/organisations', { body: { name: 'x'.repeat(70000) } });
+  assert.equal(oversized.status, 413);
 });
 
-test('Short page links preserve the check-in query across redirects', async (t) => {
-  const { base } = await fixture(t);
-  for (const page of ['wallet', 'issuer', 'kiosk', 'admin']) {
-    const response = await fetch(`${base}/${page}?req=example&other=value`, { redirect: 'manual' });
-    assert.equal(response.status, 302);
-    assert.equal(response.headers.get('location'), `/${page}.html?req=example&other=value`);
-  }
+test('The internal status provider still authenticates signatures and rejects lists expiring during verification', async (t) => {
+  const f = await fixture(t);
+  const credential = await f.issue(await f.organisation());
+  const originalSign = crypto.subtle.sign;
+  t.mock.method(crypto.subtle, 'sign', async function (...args) {
+    const signature = new Uint8Array(await originalSign.apply(this, args));
+    if (sd.parseB64Json(new TextDecoder().decode(args[2]).split('.')[0]).typ === 'statuslist+jwt') signature[0] ^= 1;
+    return signature.buffer;
+  });
+  const forged = await f.checkIn(credential);
+  assert.equal(forged.result.data.ok, false);
+  assert.equal(forged.result.data.failedAt, 'Widerrufsstatus');
+  assert.match(forged.result.data.error, /Signatur/);
+  t.mock.restoreAll();
+  const originalVerify = crypto.subtle.verify;
+  let expired = false;
+  t.mock.method(crypto.subtle, 'verify', async function (...args) {
+    if (!expired && sd.parseB64Json(new TextDecoder().decode(args[3]).split('.')[0]).typ === 'statuslist+jwt') {
+      expired = true;
+      f.advance(31000);
+    }
+    return originalVerify.apply(this, args);
+  });
+  const stale = await f.checkIn(credential);
+  assert.equal(expired, true);
+  assert.equal(stale.result.data.ok, false);
+  assert.equal(stale.result.data.failedAt, 'Widerrufsstatus');
+  assert.match(stale.result.data.error, /nicht mehr aktuell/);
+  assert.deepEqual((await f.call('/api/attendees')).data, []);
 });
 
-test('Registration proves key ownership, binds the hub audience and rejects replay', async (t) => {
-  const { api, base } = await fixture(t);
-  const issuer = await sd.generateKeyPair();
-  const challenge = (await api('/issuers/challenge', {})).data;
-  const payload = {
-    iss: issuer.did, aud: challenge.aud, nonce: challenge.nonce,
-    name: 'Erikas Issuer', employeeName: 'Erika', publicUrl: 'https://issuer.example.org',
-  };
-  const proof = await signProof(REGISTRATION_PROOF, payload, issuer.privateJwk);
-  const wrongAudience = await signProof(REGISTRATION_PROOF, { ...payload, aud: 'https://elsewhere.example.org' }, issuer.privateJwk);
-  assert.equal((await api('/issuers', { challengeId: challenge.id, proof: wrongAudience })).status, 400);
-  const stranger = await sd.generateKeyPair();
-  const wrongKey = await signProof(REGISTRATION_PROOF, payload, stranger.privateJwk);
-  assert.equal((await api('/issuers', { challengeId: challenge.id, proof: wrongKey })).status, 400);
-  const results = await Promise.all([
-    api('/issuers', { challengeId: challenge.id, proof }),
-    api('/issuers', { challengeId: challenge.id, proof }),
-  ]);
-  assert.equal(results.filter((result) => result.status === 201).length, 1);
-  assert.equal(results.filter((result) => [409, 410].includes(result.status)).length, 1);
-  assert.equal((await api('/issuers', { challengeId: challenge.id, proof })).status, 410);
-  assert.equal((await api('/issuers')).data[0].trusted, false);
-  const page = await fetch(`${base}/wallet.html`);
-  assert.match(page.headers.get('content-security-policy'), /https:\/\/issuer\.example\.org/);
-  assert.match(await page.text(), /name="issuer-origins" content="\[&quot;https:\/\/issuer.example.org&quot;\]"/);
-});
-
-test('Issuer trust withdrawal rejects an existing credential and history contains only disclosed claims', async (t) => {
-  const { api } = await fixture(t);
-  const guest = await person(t, api);
-  const first = await guest.checkIn();
-  assert.equal(first.result.data.ok, true);
-  const attendee = (await api('/attendees')).data[0];
-  assert.equal(attendee.issuerOwner, 'Erika');
-  assert.equal(attendee.credentialType, EMPLOYEE_VCT);
-  assert.equal(JSON.stringify(attendee).includes('ISST'), false);
-  assert.equal(JSON.stringify(attendee).includes('privateJwk'), false);
-  assert.equal(JSON.stringify(attendee).includes('sdjwt'), false);
-  assert.equal((await api(`/admin/issuers/${encodeURIComponent(guest.issuer.did)}/trust`, { trusted: false })).status, 200);
-  const second = await guest.checkIn();
-  assert.equal(second.result.data.ok, false);
-  assert.match(second.result.data.error, /Vertrauensliste/);
-  assert.equal((await api('/attendees')).data[0].checkins.length, 1);
-});
-
-test('Credential revocation, expired lists, unavailable issuers and legacy credentials never produce successful check-ins', async (t) => {
-  const { api } = await fixture(t);
-  const guest = await person(t, api);
-  assert.equal((await guest.checkIn()).result.data.ok, true);
-  guest.statusState.revoked = true;
-  const revoked = (await guest.checkIn()).result.data;
-  assert.equal(revoked.ok, false);
-  assert.equal(revoked.failedAt, 'Widerrufsstatus');
-  assert.match(revoked.error, /widerrufen/);
-  guest.statusState.unavailable = true;
-  const unavailable = (await guest.checkIn()).result.data;
-  assert.equal(unavailable.ok, false);
-  assert.equal(unavailable.failedAt, 'Widerrufsstatus');
-  assert.match(unavailable.error, /HTTP 503/);
-  guest.statusState.unavailable = false;
-  guest.statusState.expired = true;
-  const expired = (await guest.checkIn()).result.data;
-  assert.equal(expired.ok, false);
-  assert.equal(expired.failedAt, 'Widerrufsstatus');
-  assert.match(expired.error, /nicht mehr aktuell/);
-  const legacy = await person(t, api, 'Altbestand', { status: undefined });
-  const unknown = (await legacy.checkIn()).result.data;
-  assert.equal(unknown.ok, false);
-  assert.match(unknown.error, /neu ausstellen/);
-  assert.deepEqual((await api('/dashboard')).data.stats, { registered: 2, checkins: 1 });
-});
-
-test('Trust removed while fetching a valid credential status prevents check-in', async (t) => {
-  const { api } = await fixture(t);
-  const guest = await person(t, api);
-  let release;
-  const hold = new Promise((resolve) => { release = resolve; });
-  let arrived;
-  const reachedStatusIssuer = new Promise((resolve) => { arrived = resolve; });
-  guest.statusState.beforeResponse = () => { arrived(); return hold; };
-  const checkingIn = guest.checkIn();
-  await reachedStatusIssuer;
-  assert.equal((await api(`/admin/issuers/${encodeURIComponent(guest.issuer.did)}/trust`, { trusted: false })).status, 200);
-  release();
-  const result = (await checkingIn).result.data;
-  assert.equal(result.ok, false);
-  assert.equal(result.failedAt, 'Issuer-Vertrauen');
-  assert.match(result.error, /während der Prüfung/);
-  assert.deepEqual((await api('/dashboard')).data.stats, { registered: 1, checkins: 0 });
-});
-
-test('Invalid deployment configuration fails before serving requests', async (t) => {
-  const directory = await mkdtemp(path.join(tmpdir(), 'eudi-config-'));
-  t.after(() => rm(directory, { recursive: true, force: true }));
-  for (const options of [
-    { trustMode: 'invalid' },
-    { publicUrl: 'https://wallet.example.org/subpath' },
-    { publicUrl: 'https://user:password@wallet.example.org/' },
-    { publicUrl: 'ftp://wallet.example.org/' },
-  ]) {
-    await assert.rejects(createApp({ dataDirectory: directory, ...options }), /TRUST_MODE|PUBLIC_URL/);
+test('Invalid deployment configuration fails before serving requests', async () => {
+  await assert.rejects(createApp({ trustMode: 'auto' }), /ausschließlich/);
+  for (const publicUrl of ['http://192.168.1.1:3000', 'https://example.org/path', 'not-a-url']) {
+    await assert.rejects(createApp({ publicUrl }));
   }
 });

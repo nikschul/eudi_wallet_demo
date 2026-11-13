@@ -26,6 +26,13 @@
 .dashboard-grid { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); align-items: start; gap: 1.5rem; }
 .demo-warning { padding: .85rem 1rem; margin-bottom: 1.5rem; border: 1px solid #d5b46d; border-radius: .4rem; background: #fff6df; color: #6b4810; }
 .issuer-dashboard .stack { gap: 1.2rem; }
+.issuer-progress { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .75rem; list-style: none; padding: 0; margin: 0 0 1rem; }
+.issuer-progress li { padding: .9rem 1rem; border: 1px solid #b7ccec; border-radius: .4rem; background: #fff; color: #50627d; }
+.issuer-progress li[aria-current="step"] { border: 2px solid #174f9c; background: #edf3fc; color: #123c7b; font-weight: 750; }
+.issuer-progress li.completed { border-color: #609275; color: #17613c; }
+.onboarding-panel { max-width: 760px; }
+.fixed-organisation { display: grid; gap: .3rem; padding: 1rem; border: 1px solid #b7ccec; border-radius: .4rem; background: #edf3fc; overflow-wrap: anywhere; }
+.fixed-organisation > span { font-size: .85rem; color: #50627d; }
 .issuer-dashboard button, .issuer-dashboard .button { background: #174f9c; border-color: #174f9c; color: white; border-radius: .4rem; }
 .issuer-dashboard button:hover, .issuer-dashboard .button:hover { background: #123c7b; }
 .issuer-dashboard button.secondary { background: #edf3fc; border: 1px solid #b7ccec; color: #174f9c; }
@@ -44,14 +51,6 @@
 .offer-fields:disabled { opacity: .65; }
 .issuer-dashboard .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .actions { display: flex; gap: .75rem; flex-wrap: wrap; }
-.workflow { padding-left: 1.3rem; }
-.workflow li + li { margin-top: .7rem; }
-.connection-ok { color: #17613c; font-weight: 600; }
-.connection-failed { color: #9e291c; }
-.issuer-fingerprint { padding: 1rem; background: #edf3fc; border: 1px solid #b7ccec; border-radius: .4rem; }
-.issuer-fingerprint > span { display: block; font-size: .85rem; font-weight: 650; color: #174f9c; }
-.issuer-fingerprint > code { display: block; margin-top: .5rem; font-size: clamp(1.05rem, 2vw, 1.4rem); font-weight: 750; letter-spacing: .06em; color: #123c7b; overflow-wrap: anywhere; user-select: all; }
-.issuer-fingerprint > p { margin: .75rem 0 0; font-size: .9rem; }
 .break-anywhere, .issuer-dashboard dd, .issuer-dashboard pre { overflow-wrap: anywhere; }
 .transfer-panel { margin-top: 1.5rem; scroll-margin-top: 1.5rem; }
 .transfer-grid { display: grid; grid-template-columns: minmax(260px, .75fr) minmax(0, 1.25fr); gap: 2rem; align-items: start; }
@@ -85,6 +84,6 @@
   .issuer-shell { width: calc(100% - 2rem); margin: 1.5rem auto; }
 }
 @media (max-width: 480px) {
-  .form-grid, .credential-controls { grid-template-columns: 1fr; }
+  .form-grid, .credential-controls, .issuer-progress { grid-template-columns: 1fr; }
   .issuer-header { padding: 1rem; }
 }

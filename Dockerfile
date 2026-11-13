@@ -1,6 +1,5 @@
 FROM node:24-alpine AS verified
 WORKDIR /app
-RUN apk add --no-cache bash
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 COPY scripts ./scripts
@@ -10,7 +9,7 @@ COPY test ./test
 RUN npm run check && npm test
 
 FROM node:24-alpine AS runtime
-ENV NODE_ENV=production PORT=3000
+ENV NODE_ENV=production PORT=3000 DATA_DIR=/app/data
 WORKDIR /app
 COPY --from=verified --chown=node:node /app/package.json /app/package-lock.json ./
 COPY --from=verified --chown=node:node /app/node_modules ./node_modules

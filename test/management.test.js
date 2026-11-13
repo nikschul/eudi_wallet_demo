@@ -1,75 +1,44 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { once } from 'node:events';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
-import { createApp } from '../server/app.js';
-import { createIssuerApp } from '../server/issuer-app.js';
+import { fixture } from './helpers/hosted.js';
 import { consumeAdminToken } from '../public/lib/management.js';
 
-for (const role of ['workshop', 'issuer']) {
-  test(`${role}: management requires its runtime token; public flows never reveal it`, async (t) => {
-    const directory = await mkdtemp(path.join(tmpdir(), 'eudi-management-'));
-    t.after(() => rm(directory, { recursive: true, force: true }));
-    const factory = role === 'workshop' ? createApp : createIssuerApp;
-    const { app, adminToken } = await factory({
-      publicUrl: 'https://app.example.org', workshopUrl: 'https://hub.example.org', dataDirectory: directory,
-    });
-    assert.match(adminToken, /^[A-Za-z0-9_-]{43}$/u);
-    const server = app.listen(0, '127.0.0.1');
-    await once(server, 'listening');
-    t.after(() => new Promise((resolve) => server.close(resolve)));
-    const base = `http://127.0.0.1:${server.address().port}`;
-    const prefix = role === 'workshop' ? '/api/admin' : '/api/issuer';
-    const routes = role === 'workshop'
-      ? [['/session'], ['/reset', {}], ['/replay', {}], ['/trust-mode', { mode: 'manual' }],
-        ['/issuers/unknown/trust', { trusted: true, ownerName: 'Unbefugt' }]]
-      : [['/session'], ['/status'], ['/trust'], ['/setup', { name: 'Unbefugt', employeeName: 'Unbefugt' }],
-        ['/register', {}], ['/offers', { claims: {} }], ['/offers/unknown'],
-        ['/offers/unknown/approve', {}], ['/offers/unknown/cancel', {}],
-        ['/credentials'], ['/credentials/unknown/revoke', {}]];
-    for (const [route, body] of routes) {
-      for (const value of [undefined, 'wrong-token', `${adminToken.slice(0, -1)}!`]) {
-        const response = await fetch(`${base}${prefix}${route}`, {
-          method: body === undefined ? 'GET' : 'POST',
-          headers: { ...(value ? { 'X-Admin-Token': value } : {}),
-            ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
-          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-        });
-        assert.equal(response.status, 401, `${role}${route}`);
-        assert.equal(response.headers.get('cache-control'), 'no-store');
-        const error = await response.text();
-        assert.match(error, /aktuellen Freischalt-Link/);
-        assert.equal(error.includes(adminToken), false);
-      }
+test('Only host management uses the rotating admin token; tenant browser access cannot administer trust or recovery', async (t) => {
+  const f = await fixture(t);
+  const tenant = await f.organisation();
+  assert.match(f.adminToken, /^[A-Za-z0-9_-]{43}$/);
+  for (const [route, body] of [
+    ['/session'], ['/reset', {}], ['/replay', {}], ['/trust-mode', { mode: 'manual' }],
+    [`/issuers/${encodeURIComponent(tenant.org.did)}/trust`, { trusted: true }],
+    [`/organisations/${tenant.org.id}/recovery`, {}],
+  ]) {
+    for (const value of [undefined, 'wrong-token', `${f.adminToken.slice(0, -1)}!`]) {
+      const response = await f.call(`/api/admin${route}`, {
+        body, cookie: tenant.cookie, headers: value ? { 'X-Admin-Token': value } : {},
+      });
+      assert.equal(response.status, 401, route);
+      assert.equal(response.headers.get('cache-control'), 'no-store');
+      assert.match(response.data.error, /aktuellen Freischalt-Link/);
+      assert.equal(JSON.stringify(response.data).includes(f.adminToken), false);
     }
-    for (const suffix of [`?admin-token=${adminToken}`, `?token=${adminToken}`]) {
-      assert.equal((await fetch(`${base}${prefix}/session${suffix}`)).status, 401);
-    }
-    assert.equal((await fetch(`${base}${prefix}/session`, {
-      headers: { 'X-Admin-Token': adminToken },
-    })).status, 200);
-    for (const route of ['/api/health', '/api/config',
-      role === 'workshop' ? '/api/dashboard' : '/issuer.html',
-      role === 'workshop' ? '/admin.html' : '/lib/management.js']) {
-      const response = await fetch(`${base}${route}`);
-      assert.equal(response.status, 200, route);
-      assert.equal((await response.text()).includes(adminToken), false, route);
-    }
-    if (role === 'workshop') {
-      assert.equal((await fetch(`${base}/api/requests`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"mode":"kiosk"}',
-      })).status, 201);
-    } else {
-      const status = await (await fetch(`${base}/api/issuer/status`, {
-        headers: { 'X-Admin-Token': adminToken },
-      })).json();
-      assert.equal(status.did, undefined, 'Unauthenticated setup must not create an identity');
-      assert.equal((await fetch(`${base}/api/offers/unknown`)).status, 404);
-    }
-  });
-}
+  }
+  for (const suffix of [`?admin-token=${f.adminToken}`, `?token=${f.adminToken}`]) {
+    assert.equal((await f.call(`/api/admin/session${suffix}`)).status, 401);
+  }
+  assert.equal((await f.call('/api/admin/session', { admin: true })).status, 200);
+  assert.equal((await f.call('/api/issuer/credentials', { admin: true })).status, 401);
+  assert.equal((await f.call('/api/issuer/session', { admin: true })).data.organisation, null);
+  for (const route of ['/api/health', '/api/config', '/api/dashboard', '/admin.html', '/issuer.html', '/lib/management.js']) {
+    const response = await f.call(route);
+    assert.equal(response.status, 200, route);
+    assert.equal(JSON.stringify(response.data).includes(f.adminToken), false, route);
+  }
+  const old = f.adminToken;
+  await f.restart();
+  assert.notEqual(f.adminToken, old);
+  assert.equal((await f.call('/api/admin/session', { headers: { 'X-Admin-Token': old } })).status, 401);
+  assert.equal((await tenant.owner('/session')).data.organisation.id, tenant.org.id);
+});
 
 test('Unlock link removes its secret from the address and history before validation', () => {
   const replacements = [];

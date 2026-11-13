@@ -1,21 +1,23 @@
+name: eudi-hosted
+
 services:
   app:
-    build: .
-    image: eudi-wallet-demo:local
+    image: ${DEMO_IMAGE:-ghcr.io/nikschul/eudi_wallet_demo:latest}
+    pull_policy: always
     restart: unless-stopped
     init: true
     user: node
     environment:
-      APP_ROLE: workshop
       PORT: "3000"
       HOST_PORT: ${PORT:-3000}
-      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:${PORT:-3000}}
+      PUBLIC_URL: ${PUBLIC_URL:?PUBLIC_URL auf die zentrale oeffentliche HTTPS-Adresse setzen}
+      DATA_DIR: /app/data
       VERIFIER_NAME: ${VERIFIER_NAME:-Fraunhofer ISST – Empfang}
       EVENT_TITLE: ${EVENT_TITLE:-EUDI Wallet Workshop}
     ports:
       - "127.0.0.1:${PORT:-3000}:3000"
     volumes:
-      - workshop-data:/app/data
+      - hosted-data:/app/data
     read_only: true
     tmpfs:
       - /tmp
@@ -25,4 +27,4 @@ services:
       - no-new-privileges:true
 
 volumes:
-  workshop-data:
+  hosted-data:

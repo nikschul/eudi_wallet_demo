@@ -49,7 +49,12 @@ export class ApiError extends Error {
   }
 }
 
-export async function api(route, { body, offerToken, adminToken, baseUrl = '', timeoutMs = 15000 } = {}) {
+export async function api(route, {
+  body, offerToken, adminToken, baseUrl = '', timeoutMs = 15000, credentials = 'omit',
+} = {}) {
+  if (!['omit', 'same-origin'].includes(credentials)) {
+    throw new TypeError('Ungültiger Cookie-Modus: Erlaubt sind omit oder same-origin.');
+  }
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -65,7 +70,7 @@ export async function api(route, { body, offerToken, adminToken, baseUrl = '', t
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         cache: 'no-store',
-        credentials: 'omit',
+        credentials,
         signal: controller.signal,
       });
     } catch (error) {

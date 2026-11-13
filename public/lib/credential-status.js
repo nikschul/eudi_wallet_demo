@@ -29,10 +29,22 @@ async function boundedBytes(stream, maximum) {
   return bytes;
 }
 
-export function statusReference(payload, issuerUrl) {
+export function statusListUrl(issuer) {
+  if (!issuer || typeof issuer.id !== 'string'
+    || !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(issuer.id)) {
+    throw new Error('Die registrierte Organisationskennung ist ungültig.');
+  }
+  const uri = `${publicOrigin(issuer.publicUrl, 'Issuer-Adresse')}/api/status-lists/${issuer.id}`;
+  if (issuer.statusListUrl !== undefined && issuer.statusListUrl !== uri) {
+    throw new Error('Die registrierte Statuslisten-Adresse passt nicht zur Organisation.');
+  }
+  return uri;
+}
+
+export function statusReference(payload, issuer) {
   const reference = payload.status?.status_list;
   if (!reference) throw new Error('Dieser ältere Ausweis hat keinen Widerrufsstatus. Bitte lasse ihn neu ausstellen.');
-  const uri = `${publicOrigin(issuerUrl, 'Issuer-Adresse')}/api/status-list`;
+  const uri = statusListUrl(issuer);
   if (!Number.isSafeInteger(reference.idx) || reference.idx < 0 || reference.idx >= STATUS_LIST_ENTRIES
     || reference.uri !== uri) {
     throw new Error('Die Statusreferenz des Ausweises passt nicht zur registrierten Ausweisstelle. Bitte lasse ihn neu ausstellen.');
@@ -67,7 +79,7 @@ export function isRevoked(list, index) {
 }
 
 export async function loadStatusList(issuer, { now = () => Date.now(), timeoutMs = 5000 } = {}) {
-  const uri = `${publicOrigin(issuer.publicUrl, 'Issuer-Adresse')}/api/status-list`;
+  const uri = statusListUrl(issuer);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {

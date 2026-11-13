@@ -9,9 +9,10 @@ import {
 void globalThis.fetch;
 let issuer;
 const publicUrl = 'https://issuer.example.org';
-const uri = `${publicUrl}/api/status-list`;
+const id = '4278930d-50b9-4c62-9afd-088fd9434be4';
+const uri = `${publicUrl}/api/status-lists/${id}`;
 const seconds = () => Math.floor(Date.now() / 1000);
-before(async () => { issuer = { ...await sd.generateKeyPair(), publicUrl }; });
+before(async () => { issuer = { ...await sd.generateKeyPair(), id, publicUrl, statusListUrl: uri }; });
 
 async function token({ bytes = new Uint8Array(STATUS_LIST_ENTRIES / 8), payload = {}, header = {}, signer = issuer } = {}) {
   return sd.signJwt({ alg: 'ES256', typ: 'statuslist+jwt', ...header }, {
@@ -22,12 +23,18 @@ async function token({ bytes = new Uint8Array(STATUS_LIST_ENTRIES / 8), payload 
 
 test('Credential status references are signed indices at the registered issuer, never arbitrary callback URLs', () => {
   const reference = { idx: 17, uri };
-  assert.deepEqual(statusReference({ status: { status_list: reference } }, publicUrl), reference);
-  assert.throws(() => statusReference({}, publicUrl), /ältere.*neu ausstellen/);
+  assert.deepEqual(statusReference({ status: { status_list: reference } }, issuer), reference);
+  assert.throws(() => statusReference({}, issuer), /ältere.*neu ausstellen/);
   for (const change of [{ idx: -1 }, { idx: 0.1 }, { idx: STATUS_LIST_ENTRIES },
     { idx: '1' }, { uri: 'http://localhost:9000/private' }, { uri: `${uri}?credential=secret` }]) {
-    assert.throws(() => statusReference({ status: { status_list: { ...reference, ...change } } }, publicUrl), /Statusreferenz/);
+    assert.throws(() => statusReference({ status: { status_list: { ...reference, ...change } } }, issuer), /Statusreferenz/);
   }
+  assert.throws(() => statusReference({ status: { status_list: reference } }, publicUrl), /Organisationskennung/);
+  assert.throws(() => statusReference({ status: { status_list: reference } }, { ...issuer, id: '../private' }), /Organisationskennung/);
+  assert.throws(() => statusReference({ status: { status_list: reference } }, { ...issuer, statusListUrl: `${uri}?secret` }), /Statuslisten-Adresse/);
+  assert.throws(() => statusReference({ status: { status_list: reference } }, {
+    ...issuer, id: '258ba4ce-8db0-4bdb-b4a2-22f9419d7e89', statusListUrl: undefined,
+  }), /Statusreferenz/);
 });
 
 test('Signed fixed-size lists use least-significant-bit index order and expose no credential IDs or claims', async () => {
@@ -99,4 +106,16 @@ test('Unavailable, unexpected, oversized and stalled list responses are explicit
     start(controller) { signal.addEventListener('abort', () => controller.error(signal.reason), { once: true }); },
   }), { headers: { 'Content-Type': 'application/statuslist+jwt' } }));
   await assert.rejects(loadStatusList(issuer, { timeoutMs: 10 }), /nicht rechtzeitig/);
+});
+
+test('A status response that expires during asynchronous work is never accepted as a cached active result', async (t) => {
+  const signed = await token();
+  const exp = sd.decodeJwt(signed).payload.exp * 1000;
+  let time = exp - 1;
+  t.mock.method(globalThis, 'fetch', async () => {
+    return new Response(signed, { headers: { 'Content-Type': 'application/statuslist+jwt' } });
+  });
+  let reads = 0;
+  await assert.rejects(loadStatusList(issuer, { now: () => { reads++; return reads === 1 ? time : time + 1; } }), /nicht mehr aktuell/);
+  assert.ok(reads >= 2);
 });
