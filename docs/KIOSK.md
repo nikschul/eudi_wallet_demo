@@ -1,11 +1,15 @@
 # Kiosk / Workshop-Zentrale
 
 [Projekt und Installation](../README.md) · [Issuer](ISSUER.md) ·
-[Hands-on](PARTICIPANTS.md)
+[Hands-on](PARTICIPANTS.md) · [Automatischer Start und Tunnel](TUNNELS.md)
 
-Docker und cloudflared wie im README unter Linux/WSL einrichten.
 Die Zentrale stellt Wallet-Webapp, Kiosk-Dashboard und geschützte Verwaltung bereit.
 **Nur erfundene Daten verwenden. Freischalt-Link und Server-Logs geheim halten.**
+
+Für den automatischen lokalen Start (Variante C) siehe
+[Automatischer Start und Tunnel](TUNNELS.md): `bash scripts/demo.sh workshop`.
+Die folgenden Schritte bleiben als manuelle Alternative erhalten; dafür Docker
+und cloudflared wie im README unter Linux/WSL einrichten.
 
 ## 1. Lokal starten
 
