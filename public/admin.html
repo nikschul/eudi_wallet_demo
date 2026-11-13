@@ -3,72 +3,84 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#179C7D">
+  <meta name="theme-color" content="#245caa">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/icons/wallet.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/styles.css">
   <script type="module" src="/admin.js"></script>
-  <title>Moderation · EUDI Demo</title>
+  <title>Verwaltung · Wallet &amp; Check-In</title>
 </head>
-<body>
+<body data-area="checkin">
   <header class="site-header">
-    <a class="brand" href="/"><span class="brand-mark" aria-hidden="true">W</span> EUDI <span class="brand-light">/ Moderation</span></a>
-    <nav aria-label="Hauptnavigation"><a href="/kiosk.html">Empfang</a><a href="/wallet.html">Wallet</a></nav>
+    <a class="brand" href="/"><span class="brand-mark" aria-hidden="true">W</span> Wallet &amp; Check-In</a>
+    <nav aria-label="Hauptnavigation">
+      <a href="/" data-area="checkin">Check-In</a>
+      <a href="/issuer.html" data-area="issuer">Aussteller</a>
+      <a href="/wallet.html" data-area="wallet">Wallet</a>
+    </nav>
   </header>
   <main class="shell admin-shell">
-    <h1>Host-Verwaltung</h1>
+    <h1>Verwaltung</h1>
     <div id="error" class="message error" role="alert" hidden></div>
     <div id="notice" class="message notice" role="status" hidden></div>
-    <p class="message warning">Nur Demo-Daten verwenden. Den privaten Freischalt-Link und Admin-Token nicht an Teilnehmende weitergeben; den Tunnel nach dem Workshop beenden.</p>
+    <p class="message warning">Nur erfundene Daten verwenden. Freischalt-Link und Admin-Token privat halten.</p>
     <div id="admin-content" class="stack" hidden>
-    <section class="card">
-      <h2>Organisationen zentral freigeben</h2>
-      <ol class="guided-list">
-        <li><strong>Am Laptop registrieren:</strong> Teilnehmende öffnen die öffentliche Organisationseinrichtung. Der Server erstellt einen eigenen dauerhaften Signaturschlüssel; der Organisationsname ist danach unveränderlich. Neue Organisationen warten auf Freigabe.</li>
-        <li><strong>Organisation prüfen:</strong> Vergleiche Organisationsname, öffentliche DID und Fingerabdruck mit dem Organisationsbildschirm am Laptop. Ein frei gewählter Name beweist keine Identität.</li>
-        <li><strong>Als Host freigeben:</strong> Der Empfang vertraut dem konkreten Organisationsschlüssel. Alle Organisationen nutzen dieselbe öffentliche Adresse, aber unterschiedliche DIDs. Der Admin-Token bleibt ausschließlich beim Host.</li>
-        <li><strong>Danach ausstellen und einchecken:</strong> Die Organisation stellt Ausweise für Wallet-Inhaber aus. Ein Mitarbeiterausweis bindet Organisation und Inhaber, nicht die Bedienung am Laptop. Einzelne Credentials werden hier nicht freigegeben. Eine Organisationssperre ist kein einzelner Ausweiswiderruf; historische Check-ins bleiben unverändert.</li>
-      </ol>
-      <div class="progress-stats" aria-live="polite">
-        <div><strong id="registered-count">–</strong><span>Registrierte Organisationen</span></div>
-        <div><strong id="checkin-count">–</strong><span>Erfolgreiche Check-ins</span></div>
-      </div>
-      <div data-explain="trust"></div>
-    </section>
-    <section class="card">
-      <div class="card-top"><h2>Registrierte Organisationen</h2><button id="refresh" type="button" class="secondary">Aktualisieren</button></div>
-      <p>Registrierung allein bedeutet kein Vertrauen. Klappe eine Organisation auf, prüfe ihren festen Namen und Schlüssel und entscheide über die Freigabe. Unter den Details kannst du bei Bedarf einen privaten Wiederherstellungslink für ihren Browserzugang erstellen.</p>
-      <div class="issuer-tools">
-        <label class="field grow" for="issuer-search">Organisation suchen
-          <input id="issuer-search" type="search" placeholder="Name, DID oder Fingerabdruck" autocomplete="off" aria-controls="issuers">
-        </label>
-        <label class="field" for="issuer-filter">Vertrauensstatus
-          <select id="issuer-filter" aria-controls="issuers">
-            <option value="all">Alle Zustände</option>
-            <option value="pending">Ausstehend</option>
-            <option value="approved">Freigegeben</option>
-            <option value="suspended">Gesperrt</option>
-          </select>
-        </label>
-      </div>
-      <p class="muted list-hint">Registrierte Organisationen umfassen auch ausstehende und gesperrte Einträge. Jeder erfolgreiche Besuch zählt als Check-in, auch wiederholte Besuche. Neue Registrierungen erscheinen oben. Suche, Filter und geöffnete Details bleiben bei Live-Updates erhalten.</p>
-      <div id="issuers" class="issuer-directory" role="region" aria-label="Registrierte Organisationen" tabindex="0"></div>
-      <p id="empty" class="muted" hidden>Noch keine Organisationen registriert.</p>
-      <p id="issuer-no-match" class="muted" hidden>Keine passenden Organisationen. Suche oder Filter ändern.</p>
-    </section>
-    <section class="card">
-      <h2>Replay-Schutz testen</h2>
-      <p>Eine bereits verwendete Presentation wird gegen eine neue Nonce geprüft. Der Empfang muss den Replay-Angriff ablehnen.</p>
-      <button id="replay" type="button">Replay-Angriff vorführen</button>
-      <div id="replay-result" aria-live="polite"></div>
-      <div data-explain="binding"></div>
-    </section>
-    <section class="card">
-      <h2>Für die nächste Runde</h2>
-      <p>Leert alle Check-ins und laufenden Anfragen. Die registrierten Organisationen und ihre Freigaben bleiben erhalten.</p>
-      <button id="reset" type="button" class="secondary danger">Check-in-Liste leeren</button>
-    </section>
+      <section class="card">
+        <h2>Organisationen freigeben</h2>
+        <p>Organisation am Laptop registrieren, Namen und Schlüssel prüfen und für den Check-In freigeben.</p>
+        <details>
+          <summary>So funktioniert die Freigabe</summary>
+          <ol class="guided-list">
+            <li><strong>Am Laptop registrieren:</strong> Teilnehmende legen eine Organisation an. Sie erhält einen eigenen dauerhaften Signaturschlüssel; ihr Name ist danach unveränderlich.</li>
+            <li><strong>Organisation prüfen:</strong> Vergleiche Name, öffentliche DID und Fingerabdruck mit dem Organisationsbildschirm. Ein frei gewählter Name beweist keine Identität.</li>
+            <li><strong>Als Host freigeben:</strong> Der Check-In vertraut dem konkreten Organisationsschlüssel. Alle Organisationen nutzen dieselbe öffentliche Adresse, aber unterschiedliche DIDs.</li>
+            <li><strong>Ausstellen und einchecken:</strong> Mitarbeiterausweise binden Organisation und Inhaber. Eine Organisationssperre widerruft keinen einzelnen Ausweis; historische Check-Ins bleiben unverändert.</li>
+          </ol>
+          <div data-explain="trust"></div>
+        </details>
+        <div class="progress-stats" aria-live="polite">
+          <div><strong id="registered-count">–</strong><span>Registrierte Organisationen</span></div>
+          <div><strong id="checkin-count">–</strong><span>Erfolgreiche Check-Ins</span></div>
+        </div>
+      </section>
+      <section class="card">
+        <div class="card-top"><h2>Registrierte Organisationen</h2><button id="refresh" type="button" class="secondary">Aktualisieren</button></div>
+        <p>Organisation öffnen, Namen und Schlüssel prüfen und freigeben. Wiederherstellungslinks findest du in den Details.</p>
+        <div class="issuer-tools">
+          <label class="field grow" for="issuer-search">Organisation suchen
+            <input id="issuer-search" type="search" placeholder="Name, DID oder Fingerabdruck" autocomplete="off" aria-controls="issuers">
+          </label>
+          <label class="field" for="issuer-filter">Vertrauensstatus
+            <select id="issuer-filter" aria-controls="issuers">
+              <option value="all">Alle Zustände</option>
+              <option value="pending">Ausstehend</option>
+              <option value="approved">Freigegeben</option>
+              <option value="suspended">Gesperrt</option>
+            </select>
+          </label>
+        </div>
+        <details>
+          <summary>Hinweise zu Status und Zählung</summary>
+          <p>Die Liste enthält auch ausstehende und gesperrte Organisationen. Jeder erfolgreiche Besuch zählt als Check-In. Neue Registrierungen erscheinen oben; Suche, Filter und geöffnete Details bleiben bei Live-Updates erhalten.</p>
+        </details>
+        <div id="issuers" class="issuer-directory" role="region" aria-label="Registrierte Organisationen" tabindex="0"></div>
+        <p id="empty" class="muted" hidden>Noch keine Organisationen registriert.</p>
+        <p id="issuer-no-match" class="muted" hidden>Keine passenden Organisationen. Suche oder Filter ändern.</p>
+      </section>
+      <details class="card">
+        <summary>Replay-Schutz testen</summary>
+        <p>Eine bereits verwendete Presentation wird gegen eine neue Nonce geprüft. Der Check-In muss den Replay-Angriff ablehnen.</p>
+        <button id="replay" type="button">Replay-Angriff vorführen</button>
+        <div id="replay-result" aria-live="polite"></div>
+        <div data-explain="binding"></div>
+      </details>
+      <section class="card">
+        <h2>Für die nächste Runde</h2>
+        <p>Leert alle Check-Ins und laufenden Anfragen. Organisationen und Freigaben bleiben erhalten.</p>
+        <button id="reset" type="button" class="secondary danger">Check-In-Liste leeren</button>
+      </section>
     </div>
+    <footer>Simulation · Nur erfundene Daten verwenden.</footer>
   </main>
 </body>
 </html>

@@ -3,56 +3,71 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#179C7D">
-  <meta name="description" content="Organisation im Browser einrichten, Mitarbeiterausweis in der Smartphone-Wallet empfangen und am Kiosk einchecken.">
+  <meta name="theme-color" content="#245caa">
+  <meta name="description" content="Ausweis in der Wallet erhalten und sicher einchecken.">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/icons/wallet.svg" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
   <link rel="stylesheet" href="/styles.css">
-  <script type="module" src="/index.js"></script>
-  <title>EUDI Wallet Workshop</title>
+  <link rel="stylesheet" href="/kiosk.css">
+  <script type="module" src="/kiosk.js"></script>
+  <title>Check-In · Wallet &amp; Check-In</title>
 </head>
-<body>
+<body class="kiosk-body" data-area="checkin">
   <header class="site-header">
-    <a class="brand" href="/"><span class="brand-mark" aria-hidden="true">W</span> EUDI <span class="brand-light">/ Demo</span></a>
-    <nav aria-label="Hauptnavigation"><a href="/issuer.html">Organisation</a><a href="/wallet.html">Wallet</a><a href="/kiosk.html">Empfang</a></nav>
+    <a class="brand" href="/"><span class="brand-mark" aria-hidden="true">W</span> Wallet &amp; Check-In</a>
+    <nav aria-label="Hauptnavigation">
+      <a href="/" data-area="checkin" aria-current="page">Check-In</a>
+      <a href="/issuer.html" data-area="issuer" target="_blank" rel="noopener noreferrer" aria-label="Aussteller (neuer Tab)">Aussteller</a>
+      <a href="/wallet.html" data-area="wallet">Wallet</a>
+    </nav>
   </header>
-  <main class="shell landing">
-    <div id="error" class="message error" role="alert" hidden></div>
-    <div id="notice" class="message notice" role="status" hidden></div>
-    <section class="hero">
-      <h1 data-event-title>EUDI Wallet Workshop</h1>
-      <p>Der Host stellt die Anwendung bereit. Du richtest deine Organisation im Laptop-Browser ein; deine persönliche Wallet bleibt auf deinem Handy. Am Empfang zeigst du nur die Angaben vor, die du freigibst.</p>
-      <div class="journey" aria-label="Dein Weg zum Check-in">
-        <span><b>01 · Laptop</b> Organisation einrichten</span><span><b>02 · Handy</b> Ausweis erhalten</span><span><b>03 · Kiosk</b> Einchecken</span>
+  <main class="kiosk-layout">
+    <section class="kiosk-main" aria-labelledby="checkin-title">
+      <div><span class="event-label" data-event-title>Wallet &amp; Check-In</span><h1 id="checkin-title">Check-In</h1><p>Mit deinem Mitarbeiterausweis einchecken</p></div>
+      <div id="error" class="message error" role="alert" hidden></div>
+      <div id="notice" class="message notice" role="status" hidden></div>
+      <noscript>Bitte aktiviere JavaScript für den Check-In-QR und die Live-Anzeige.</noscript>
+      <div id="qr-stage" class="qr-stage">
+        <div class="qr-frame"><img id="checkin-qr" width="640" height="640" alt="QR-Code zum Check-In mit der Wallet" hidden><span id="qr-loading">QR-Code wird erstellt …</span></div>
+        <a id="checkin-link" class="qr-link" href="/wallet.html">Auf diesem Gerät einchecken</a>
+        <ol class="kiosk-instructions"><li>Wallet auf dem Handy öffnen</li><li>Diesen QR-Code in der Wallet scannen</li><li>Ausweis wählen und Angaben teilen</li></ol>
       </div>
-      <div class="stack">
-        <a id="organisation-start" class="button" href="/issuer.html">Organisation am Laptop einrichten</a>
-        <a id="wallet-start" class="button secondary" href="/wallet.html">Wallet auf dem Handy öffnen</a>
-        <span id="wallet-hint" class="muted" hidden>Deine Wallet ist in diesem Browser bereits angelegt.</span>
-      </div>
+      <aside class="organisation-setup">
+        <img id="issuer-setup-qr" width="112" height="112" alt="QR-Code zum Einrichten einer Organisation" hidden>
+        <div><strong>Noch keinen Ausweis?</strong>
+          <p>Am Laptop eine Organisation einrichten und einen Ausweis ausstellen.</p>
+          <a id="issuer-setup-link" class="organisation-setup-link" href="/issuer.html" target="_blank" rel="noopener noreferrer">Organisation anlegen ↗</a>
+          <p><a id="wallet-start" href="/wallet.html">Wallet öffnen</a> · auf dem Handy</p>
+        </div>
+      </aside>
+      <p class="kiosk-disclaimer">Simulation · Nur erfundene Daten verwenden · <a href="/admin.html">Verwaltung</a></p>
     </section>
-    <section class="card workshop-intro">
-      <h2>Dein Workshop in fünf Schritten</h2>
-      <ol class="guided-list">
-        <li><strong>Organisation anlegen.</strong> Öffne die Organisationseinrichtung auf deinem Laptop und trage den Namen deiner Demo-Organisation ein. Du brauchst weder Docker noch einen Admin-Token. Der Zugang wird in diesem Browser gemerkt.</li>
-        <li><strong>Bestätigung abwarten.</strong> Der Host bestätigt deine Organisation in seiner Verwaltung. Jede Organisation hat einen eigenen Ausstellerschlüssel; einzelne Ausweise brauchen keine Host-Freigabe.</li>
-        <li><strong>Mitarbeiterausweis vorbereiten.</strong> Gib Vor- und Nachname ein und wähle Mitarbeitende, Teamleitung oder Gast. Der Organisationsname ist fest vorgegeben. Erzeuge das QR-Angebot.</li>
-        <li><strong>Auf dem Handy empfangen.</strong> Scanne das Angebot in der Wallet oder PWA. Beim ersten Mal wird die Wallet-Einrichtung vorgeschaltet. Gib den Ausgabecode vom Laptop ein; der Ausweis wird automatisch signiert und kann gespeichert werden.</li>
-        <li><strong>Am Empfang einchecken.</strong> Scanne den großen Empfangs-QR mit der Kamera in deiner Wallet und entscheide, welche Angaben öffentlich in der Check-in-Liste erscheinen.</li>
-      </ol>
-      <p>Für Teilnehmende läuft alles im Browser. Den privaten Host-Adminzugang brauchst du nicht. Verlierst du den Browserzugang zu deiner Organisation, kann nur der Host ihn wiederherstellen.</p>
-      <div data-explain="trust"></div>
-    </section>
-    <section class="card info">
-      <h2>QR-Codes direkt in der Wallet scannen</h2>
-      <p>Öffne auf deinem Handy die Wallet und wähle <strong>„QR-Code scannen“</strong>. So bleibst du auch in der installierten PWA und musst nicht zur externen Kamera-App wechseln. Die Kamera wird erst nach deinem Klick gestartet.</p>
-      <p>Bleibe für deine Ausweise im <strong>selben Browser oder derselben PWA</strong>. Auf iOS kann eine installierte PWA eigenen Speicher haben; eine zuvor in Safari angelegte Wallet wird nicht automatisch übertragen. Nutze die PWA deshalb möglichst von Anfang an. Im privaten Modus können Schlüssel beim Schließen verloren gehen.</p>
-      <button id="install" class="secondary" type="button" hidden>Demo als PWA installieren</button>
-      <p class="muted">Auf iOS: Teilen → Zum Home-Bildschirm. Die Installation ist optional.</p>
-      <div data-explain="real"></div>
-    </section>
-    <footer><span>Simulation · Keine amtlichen Ausweise</span><a href="/admin.html">Moderation</a></footer>
+    <aside class="kiosk-sidebar">
+      <section class="card progress-panel" aria-labelledby="organisations-title">
+        <div class="panel-heading">
+          <h2 id="organisations-title">Registrierte Organisationen</h2>
+          <div id="progress-stats" class="progress-stats">
+            <div><strong id="registered-count">–</strong><span>registriert</span></div>
+            <div><strong id="checkin-count">–</strong><span>erfolgreiche Check-Ins</span></div>
+          </div>
+        </div>
+        <p class="muted list-hint">Live-Status der Aussteller</p>
+        <p id="dashboard-error" class="message error" role="alert" hidden></p>
+        <ul id="progress-list" class="progress-list" aria-label="Organisationen und aktuelles Vertrauen"><li class="muted">Organisationen werden geladen …</li></ul>
+        <p id="issuer-pages" class="page-indicator"></p>
+      </section>
+      <section class="card activity-panel" aria-labelledby="attempts-title">
+        <div class="panel-heading"><h2 id="attempts-title">Check-In-Versuche</h2><span class="muted">Neueste zuerst</span></div>
+        <p class="muted list-hint">Die letzten 100 Versuche · automatisch aktualisiert</p>
+        <ul id="attempts" class="attempt-list"><li class="muted">Versuche werden geladen …</li></ul>
+        <p id="attempt-pages" class="page-indicator"></p>
+      </section>
+      <section class="card attendees-panel" aria-labelledby="attendees-title">
+        <div class="panel-heading"><h2 id="attendees-title">Heute eingecheckt</h2><p id="attendee-pages" class="page-indicator"></p></div>
+        <p id="attendees-error" class="message error" role="alert" hidden></p>
+        <ul id="attendees" class="attendee-list"><li class="muted">Gäste werden geladen …</li></ul>
+      </section>
+    </aside>
   </main>
 </body>
 </html>

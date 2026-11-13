@@ -15,6 +15,7 @@ let offerTimer;
 let statusTimer;
 let camera;
 let cancelBiometrics;
+let walletInitialization;
 const revokedCredentials = new Set();
 
 function stopTimers() {
@@ -49,7 +50,7 @@ async function openScanner(version) {
     () => camera?.start());
   root.replaceChildren(el('section', { class: 'card wallet-scanner', 'aria-label': 'QR-Code scannen' },
     heading,
-    el('p', {}, 'Scanne ein Angebot vom Notebook oder den QR am Empfang. Du bleibst in deiner Wallet.'),
+    el('p', {}, 'Scanne den Ausstellungs-QR vom Laptop oder den Check-In-QR.'),
     video, status,
     el('div', { class: 'scanner-actions' }, retry,
       action(el('button', { type: 'button', class: 'secondary' }, 'Scannen abbrechen'), render))));
@@ -127,8 +128,8 @@ async function credentialStatuses(credentials, walletDid, registeredIssuers) {
       const revoked = revokedCredentials.has(credential.sdjwt);
       return {
         state: revoked ? 'revoked' : 'active',
-        reason: revoked ? 'Die Ausweisstelle hat diesen Ausweis widerrufen. Kein Check-in möglich.'
-          : 'Signatur und aktuelle signierte Statusliste geprüft: nicht widerrufen. Das Issuer-Vertrauen prüft der Empfang separat.',
+        reason: revoked ? 'Die Ausweisstelle hat diesen Ausweis widerrufen. Kein Check-In möglich.'
+          : 'Signatur und Widerrufsstatus sind aktuell geprüft. Beim Check-In wird zusätzlich das Vertrauen zum Aussteller geprüft.',
         checkedAt: Date.now(), expiresAt: Math.min(list.expiresAt, payload.exp * 1000),
         credentialExpiresAt: payload.exp * 1000,
       };
@@ -148,7 +149,7 @@ async function credentialStatuses(credentials, walletDid, registeredIssuers) {
 
 function statusView() {
   const badge = el('span', { class: 'badge badge-warn' }, 'Status nicht prüfbar');
-  const reason = el('p', { class: 'muted' }, 'Eine aktuelle authentifizierte Statusprüfung steht noch aus. Kein Check-in möglich.');
+  const reason = el('p', { class: 'muted' }, 'Eine aktuelle authentifizierte Statusprüfung steht noch aus. Kein Check-In möglich.');
   const time = el('p', { class: 'muted' }, 'Letzte Statusprüfung: noch nicht erfolgt.');
   let current;
   function update(status) {
@@ -160,7 +161,7 @@ function statusView() {
   }
   function pending() {
     if (current?.state !== 'active') return;
-    update({ ...current, state: 'unknown', reason: 'Die aktuelle Statusprüfung läuft. Ohne bestätigten Status ist kein Check-in möglich.' });
+    update({ ...current, state: 'unknown', reason: 'Die aktuelle Statusprüfung läuft. Ohne bestätigten Status ist kein Check-In möglich.' });
   }
   return { badge, reason, time, update, pending };
 }
@@ -185,13 +186,6 @@ function pollStatuses(wallet, credentials, views, version, initialStatuses) {
 function goHome() {
   history.replaceState(null, '', '/wallet.html');
   return render();
-}
-
-function journey(active) {
-  return el('ol', { class: 'workshop-journey', 'aria-label': 'Dein Workshop-Fortschritt' },
-    [active === 0 ? 'Wallet einmalig einrichten' : 'Wallet eingerichtet', 'Ausweis empfangen', 'Am Empfang einchecken'].map((title, index) => (
-      el('li', { class: index === active ? 'current' : index < active ? 'complete' : '' }, `${index + 1}. ${title}`)
-    )));
 }
 
 function credentialRaw(credential) {
@@ -226,9 +220,8 @@ function credentialCard(credential, wallet, status, version) {
       status.badge),
     el('h2', {}, `${claims.given_name || ''} ${claims.family_name || ''}`.trim() || 'Gespeicherter Ausweis'),
     el('p', { class: 'muted' }, `Ausgestellt von ${credential.issuerName}`),
-    el('p', { class: 'muted' }, 'In deiner Wallet gespeichert. Du entscheidest beim Vorzeigen, welche Angaben du teilst. Der Empfang prüft dabei den Nachweis und sein Vertrauen zum Issuer.'),
     el('p', { class: 'muted' }, `Gültig bis ${Number.isSafeInteger(payload.exp) ? new Date(payload.exp * 1000).toLocaleString('de-DE') : 'unbekannt'}`),
-    status.reason, status.time,
+    el('details', {}, el('summary', {}, 'Statusprüfung'), status.reason, status.time),
     el('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Nachweis-Details' }, viewTab, rawTab),
     view, data, explain('credential'),
     action(el('button', { type: 'button', class: 'secondary danger' }, 'Ausweis aus diesem Browser löschen'), async () => {
@@ -243,24 +236,32 @@ function credentialCard(credential, wallet, status, version) {
     }));
 }
 
-function onboarding(version) {
-  const fromOffer = location.hash.startsWith('#offer=');
-  const create = action(el('button', { type: 'button' }, 'Wallet auf diesem Handy erstellen'), async () => {
+async function ensureWallet(version) {
+  async function initialize() {
+    let wallet = readStored('wallet');
+    if (wallet) {
+      walletInitialization = undefined;
+      return wallet;
+    }
     requireCrypto();
-    if (readStored('wallet')) return render();
-    const pair = await sd.generateKeyPair();
-    if (version !== renderVersion) return;
-    if (!readStored('wallet')) writeStored('wallet', { ...pair, credentials: [] });
-    await render();
-  });
-  root.replaceChildren(journey(0), el('section', { class: 'card empty-state wallet-empty' },
-    el('div', { class: 'wallet-outline', 'aria-hidden': 'true' }),
-    el('h2', {}, 'Wallet einmalig auf diesem Handy einrichten'),
-    el('p', {}, 'Verwalte deine Organisation am Notebook unter derselben Workshop-Adresse. Hier auf dem Handy verwahrst du deinen Ausweis und entscheidest später, was du teilst.'),
-    el('p', {}, fromOffer ? 'Dein Ausstellungsangebot ist geöffnet. Richte deine Wallet einmalig ein und empfange anschließend deinen Ausweis.'
-      : 'Keine Anmeldung und keine Installation: Dein Browser erzeugt einen persönlichen Schlüssel.'),
-    create, scannerButton(version), explain('keypair')),
-  pastedQr());
+    walletInitialization ??= sd.generateKeyPair();
+    let pair;
+    try { pair = await walletInitialization; } catch (error) {
+      walletInitialization = undefined;
+      throw error;
+    }
+    if (version !== renderVersion) return null;
+    wallet = readStored('wallet');
+    if (!wallet) {
+      wallet = { ...pair, credentials: [] };
+      writeStored('wallet', wallet);
+    }
+    walletInitialization = undefined;
+    return wallet;
+  }
+  return typeof navigator.locks?.request === 'function'
+    ? navigator.locks.request('eudi-wallet-initialization', initialize)
+    : initialize();
 }
 
 async function holderProof(wallet, offer) {
@@ -287,9 +288,9 @@ async function issuance(wallet, link, version) {
   const panel = el('section', { class: 'card' },
     el('span', { class: 'eyebrow' }, 'Angebot deiner Ausweisstelle'),
     el('h2', {}, issuer.name), attributes(offer.claims),
-    el('p', {}, 'Gib den sechsstelligen Ausgabecode vom Notebook ein. Nach erfolgreicher Prüfung wird der Ausweis automatisch signiert. Bleibe dazu auf diesem Handy. Dein privater Schlüssel wird nicht übertragen.'),
+    el('p', {}, 'Gib den sechsstelligen Code ein, der am Laptop unter dem QR-Code steht.'),
     action(el('button', { type: 'button', class: 'secondary' }, 'Zur Wallet'), goHome));
-  root.replaceChildren(journey(1), panel);
+  root.replaceChildren(panel);
 
   async function displayIssued() {
     const received = await remote('/credential', { proof: await holderProof(wallet, offer) });
@@ -329,11 +330,11 @@ async function issuance(wallet, link, version) {
       if (version !== renderVersion) return;
       history.replaceState(null, '', '/wallet.html');
       await render();
-      notify('Mitarbeiterausweis gespeichert. Du kannst jetzt am Empfang einchecken.');
+      notify('Mitarbeiterausweis gespeichert. Du kannst jetzt einchecken.');
     });
     panel.replaceChildren(el('span', { class: 'eyebrow' }, 'Automatisch von deiner Organisation signiert'),
       el('h2', {}, 'Dein Mitarbeiterausweis ist bereit'),
-      el('p', {}, `Signatur, Bindung an deine Wallet und aktueller Widerrufsstatus wurden geprüft. Aussteller und signierte Organisation: ${issuer.name}.`),
+      el('p', {}, 'Der Ausweis wurde geprüft. Speichere ihn, um damit einzuchecken.'),
       attributes(description.claims), accept,
       action(el('button', { type: 'button', class: 'secondary' }, 'Zur Wallet'), goHome), explain('credential'),
       credentialRaw(received));
@@ -364,8 +365,7 @@ async function issuance(wallet, link, version) {
     if (version !== renderVersion) return;
     panel.replaceChildren(el('span', { class: 'eyebrow' }, 'Wallet verbunden'),
       el('h2', {}, 'Dein Ausweis wird automatisch signiert'),
-      el('p', {}, 'Ausgabecode und Wallet-Schlüsselbesitz wurden geprüft. Bleibe auf diesem Handy: Die Organisation signiert automatisch, danach kannst du den Ausweis prüfen und speichern. Am Notebook ist keine weitere Aktion nötig.'),
-      el('p', { class: 'muted' }, 'Dein privater Schlüssel bleibt hier auf dem Handy.'),
+      el('p', {}, 'Code bestätigt. Dein Ausweis wird vorbereitet; bleibe auf dieser Seite.'),
       action(el('button', { type: 'button', class: 'secondary' }, 'Zur Wallet'), goHome), explain('binding'));
     await waitForIssue();
   }
@@ -378,7 +378,6 @@ async function issuance(wallet, link, version) {
         title: 'Bitte gib die sechs Ziffern ein, die nur beim Angebot auf dem Notebook angezeigt werden.',
         'data-validation-message': 'Bitte gib den sechsstelligen Ausgabecode vom Notebook ein.',
       })),
-    el('p', { class: 'muted' }, 'Der Code steht nur am Notebook unter dem Angebots-QR. Er ist kein Wallet-Passwort und keine Freigabe durch den Empfang.'),
     el('button', { type: 'submit' }, 'Ausgabecode prüfen & Ausweis empfangen')),
   async (data) => connect(String(data.get('transactionCode')).trim()));
   panel.append(connectForm, explain('issuance'), raw({
@@ -447,10 +446,10 @@ function demoBiometrics(credential, reveal, version) {
 }
 
 async function consent(wallet, id, version) {
-  const preparing = verificationProgress('Check-in-Anfrage vorbereiten', [
-    'Anfrage und Empfang prüfen', 'Passende Mitarbeiterausweise ermitteln', 'Signaturen und aktuellen Widerrufsstatus prüfen',
+  const preparing = verificationProgress('Check-In-Anfrage vorbereiten', [
+    'Check-In-Anfrage prüfen', 'Passende Mitarbeiterausweise ermitteln', 'Signaturen und aktuellen Widerrufsstatus prüfen',
   ]);
-  root.replaceChildren(journey(2), preparing.node);
+  root.replaceChildren(preparing.node);
   preparing.node.focus();
   preparing.node.scrollIntoView?.({ block: 'start' });
   async function prepare(work) {
@@ -462,8 +461,8 @@ async function consent(wallet, id, version) {
   let request = await prepare(() => api(`/requests/${encodeURIComponent(id)}`));
   if (version !== renderVersion) return;
   if (request.status !== 'pending') {
-    const message = request.status === 'expired' ? 'Dieser QR-Code ist abgelaufen. Bitte scanne den aktuellen Code am Empfang.'
-      : 'Dieser Check-in-Versuch wurde schon verwendet. Bitte scanne den QR am Empfang erneut.';
+    const message = request.status === 'expired' ? 'Dieser QR-Code ist abgelaufen. Bitte scanne den aktuellen Check-In-Code.'
+      : 'Dieser Check-In-Versuch wurde schon verwendet. Bitte scanne den Check-In-QR erneut.';
     preparing.fail(message);
     throw new Error(message);
   }
@@ -481,8 +480,8 @@ async function consent(wallet, id, version) {
     } catch { return false; }
   });
   if (!candidates.length) {
-    root.replaceChildren(journey(1), el('section', { class: 'card' }, el('h2', {}, 'Dir fehlt noch dein Mitarbeiterausweis'),
-      el('p', {}, 'Öffne deine freigegebene Organisation am Notebook unter dieser Workshop-Adresse. Erstelle dort ein Angebot und scanne dessen QR in deiner Wallet. Erst danach kommst du zum Empfang zurück.'),
+    root.replaceChildren(el('section', { class: 'card' }, el('h2', {}, 'Dir fehlt noch dein Mitarbeiterausweis'),
+      el('p', {}, 'Lass dir am Laptop einen Ausweis ausstellen und scanne dessen QR-Code in deiner Wallet. Danach kannst du einchecken.'),
       action(el('button', { type: 'button', class: 'secondary' }, 'Zur Wallet'), goHome), explain('issuance')));
     return;
   }
@@ -492,8 +491,8 @@ async function consent(wallet, id, version) {
   preparing.update(3);
   const eligible = statuses.flatMap((status, index) => status.state === 'active' && status.expiresAt > Date.now() ? [index] : []);
   if (!eligible.length) {
-    root.replaceChildren(journey(2), el('section', { class: 'card' },
-      el('h2', {}, 'Check-in derzeit nicht möglich'),
+    root.replaceChildren(el('section', { class: 'card' },
+      el('h2', {}, 'Check-In derzeit nicht möglich'),
       el('p', {}, 'Kein passender Ausweis mit aktuellem, authentifiziertem und nicht widerrufenem Status verfügbar.'),
       statuses.map((status) => el('p', { class: 'message warning' }, status.reason)),
       action(el('button', { type: 'button', class: 'secondary' }, 'Zur Wallet'), goHome)));
@@ -506,7 +505,7 @@ async function consent(wallet, id, version) {
   const preview = el('div', { class: 'disclosure-preview', 'aria-live': 'polite' });
   const fields = el('fieldset', {}, el('legend', {}, 'Welche Angaben möchtest du teilen?'));
   const consentDetails = el('div', { class: 'stack', hidden: true }, status.badge, status.reason, status.time, fields,
-    el('p', { class: 'muted' }, 'Vor- und Nachname sind für die Anwesenheitskontrolle erforderlich. Zusätzliche Angaben sind freiwillig; eine nicht geteilte Rolle ändert den Check-in nicht. Die ausstellende Organisation ist über ihren Signaturschlüssel ohnehin erkennbar.'),
+    el('p', { class: 'muted' }, 'Dein Name ist für die Anwesenheitsliste erforderlich, weitere Angaben sind freiwillig. Der Aussteller bleibt über seine Signatur erkennbar.'),
     preview);
   const submitButton = el('button', { type: 'submit', disabled: true }, 'Freigeben & einchecken');
   const selection = el('fieldset', { class: 'credential-picker' }, el('legend', {}, 'Welchen Ausweis möchtest du verwenden?'));
@@ -549,7 +548,7 @@ async function consent(wallet, id, version) {
     const shared = Object.entries(claims).filter(([field]) => request.required.includes(field) || inputByField.get(field)?.checked);
     const privateClaims = Object.entries(claims).filter(([field]) => !shared.some(([key]) => key === field));
     preview.replaceChildren(
-      el('section', {}, el('h3', {}, 'Empfang erhält'), attributes(Object.fromEntries(shared))),
+      el('section', {}, el('h3', {}, 'Beim Check-In geteilt'), attributes(Object.fromEntries(shared))),
       el('section', {}, el('h3', {}, 'Nicht als Attribut geteilt'),
         privateClaims.length ? attributes(Object.fromEntries(privateClaims)) : el('p', {}, 'Keine weiteren Angaben im Ausweis.')));
   }
@@ -575,16 +574,16 @@ async function consent(wallet, id, version) {
     consentDetails.hidden = false;
     updatePreview();
   }
-  const progress = verificationProgress('Der Empfang prüft deinen Nachweis', verificationChecks);
+  const progress = verificationProgress('Dein Ausweis wird geprüft', verificationChecks);
   progress.node.hidden = true;
   const form = formAction(el('form', { class: 'stack' },
     selection, consentDetails,
-    el('p', { class: 'privacy-note' }, 'Freigegebene Angaben werden am Fernseher sichtbar gespeichert. Nicht ausgewählte Attribute werden nicht gesendet. Auch abgelehnte Versuche erscheinen mit ausdrücklich ungeprüftem Namen und Fehlergrund. Verwende nur Demo-Daten.'),
+    el('p', { class: 'privacy-note' }, 'Geteilte Angaben erscheinen öffentlich in der Check-In-Anzeige. Fehlgeschlagene Versuche zeigen den ungeprüften Namen und Fehlergrund. Nur erfundene Daten verwenden.'),
     submitButton,
     action(el('button', { type: 'button', class: 'secondary' }, 'Ablehnen'), goHome)), async () => {
     if (version !== renderVersion) return;
     try {
-      if (selectedIndex === undefined) throw new Error('Bitte wähle zuerst einen Ausweis für diesen Check-in aus.');
+      if (selectedIndex === undefined) throw new Error('Bitte wähle zuerst einen Ausweis für diesen Check-In aus.');
       requireCrypto();
       const credential = candidates[selectedIndex];
       const reveal = [...request.required, ...request.optional.filter((field) => inputByField.get(field)?.checked)];
@@ -597,14 +596,14 @@ async function consent(wallet, id, version) {
       const [fresh] = await credentialStatuses([credential], wallet.did);
       if (version !== renderVersion) return;
       status.update(fresh);
-      if (fresh.state !== 'active') throw new Error(`Check-in nicht möglich: ${fresh.reason}`);
+      if (fresh.state !== 'active') throw new Error(`Check-In nicht möglich: ${fresh.reason}`);
       const current = storedCredential(wallet.did, credential);
       const presentation = await sd.createPresentation({
         sdjwt: credential.sdjwt, reveal, holderPrivateJwk: current.privateJwk, aud: request.aud, nonce: request.nonce,
       });
       if (version !== renderVersion) return;
       storedCredential(wallet.did, credential);
-      if (revokedCredentials.has(credential.sdjwt)) throw new Error('Die Ausweisstelle hat diesen Ausweis widerrufen. Kein Check-in möglich.');
+      if (revokedCredentials.has(credential.sdjwt)) throw new Error('Die Ausweisstelle hat diesen Ausweis widerrufen. Kein Check-In möglich.');
       if (fresh.expiresAt <= Date.now()) throw new Error('Die Statusprüfung ist inzwischen abgelaufen. Bitte versuche es erneut.');
       progress.node.hidden = false;
       progress.node.setAttribute('tabindex', '-1');
@@ -620,14 +619,14 @@ async function consent(wallet, id, version) {
       if (version !== renderVersion) return;
       stopTimers();
       renderVersion++;
-      const resultHeading = el('h2', { tabindex: '-1' }, result.ok ? 'Du bist eingecheckt' : 'Check-in nicht möglich');
-      root.replaceChildren(journey(2), el('section', { class: `card result-card ${result.ok ? 'success' : 'failure'}` },
+      const resultHeading = el('h2', { tabindex: '-1' }, result.ok ? 'Du bist eingecheckt' : 'Check-In nicht möglich');
+      root.replaceChildren(el('section', { class: `card result-card ${result.ok ? 'success' : 'failure'}` },
         el('span', { class: 'result-symbol', 'aria-hidden': 'true' }, result.ok ? '✓' : '✗'),
         resultHeading,
         el('p', { class: 'attempt-code' }, `Versuch ${id.slice(0, 8)}`),
         el('p', {}, result.ok ? 'Am Fernseher siehst du genau die von dir geteilten Angaben.' : result.error),
         result.ok ? attributes(result.claims) : el('p', {}, result.failedAt === 'Issuer-Vertrauen'
-          ? 'Der Empfang akzeptiert den Issuer derzeit nicht. Bitte kläre dessen Setup mit der Moderation. Der Ausweis bleibt unverändert in deiner Wallet; er benötigt keine nachträgliche Freigabe.'
+          ? 'Diesem Aussteller wird beim Check-In derzeit nicht vertraut. Bitte wende dich an die Moderation. Dein Ausweis bleibt in der Wallet erhalten.'
           : 'Bitte beachte den Prüfgrund unten. Deine gespeicherten Ausweise bleiben erhalten.'),
         steps(result), explain('trust'), raw(result), action(el('button', { type: 'button', class: 'secondary' }, 'Zur Wallet'), goHome)));
       resultHeading.focus();
@@ -645,10 +644,10 @@ async function consent(wallet, id, version) {
   });
   optionViews.forEach((view, index) => view.update(statuses[index]));
   if (eligible.length === 1) select(eligible[0]);
-  root.replaceChildren(journey(2), el('section', { class: 'card' },
+  root.replaceChildren(el('section', { class: 'card' },
     el('h2', {}, `${request.verifierName} möchte folgende Angaben sehen`),
     el('p', { class: 'muted attempt-code' }, `Versuch ${id.slice(0, 8)} · Du findest diesen Code auch am Kiosk.`),
-    el('p', {}, eligible.length > 1 ? 'Mehrere Ausweise passen. Du entscheidest, welche Organisation du bei diesem Check-in vorzeigst.'
+    el('p', {}, eligible.length > 1 ? 'Mehrere Ausweise passen. Du entscheidest, welche Organisation du bei diesem Check-In vorzeigst.'
       : 'Dieser Ausweis passt zur Anwesenheitskontrolle. Prüfe die Angaben vor der Freigabe.'),
     form, progress.node, explain('sd'), explain('binding'), raw(request)));
   pollStatuses(wallet, candidates, optionViews, version, statuses);
@@ -657,10 +656,10 @@ async function consent(wallet, id, version) {
 function home(wallet, version) {
   const credentials = el('section', { class: 'stack wallet-credentials', 'aria-label': 'Deine Ausweise' });
   root.replaceChildren(el('h2', {}, 'Meine Ausweise'), credentials,
-    el('section', { class: 'card' }, el('h2', {}, wallet.credentials.length ? 'Ausweis am Empfang vorzeigen' : 'Einen Ausweis erhalten'),
+    el('section', { class: 'card' }, el('h2', {}, wallet.credentials.length ? 'Ausweis vorzeigen oder empfangen' : 'Einen Ausweis erhalten'),
       el('p', {}, wallet.credentials.length
-        ? 'Erst wenn du den Empfangs-QR scannst oder dessen Link bewusst öffnest, fragt der Empfang nach Angaben aus deinem Ausweis. Hier siehst du nur deine gespeicherten Ausweise.'
-        : 'Öffne deine freigegebene Organisation am Notebook unter dieser Workshop-Adresse. Erstelle dort ein Angebot und scanne dessen QR hier in der Wallet.'),
+        ? 'Scanne einen Check-In-QR oder den QR-Code für einen neuen Ausweis.'
+        : 'Scanne den Ausstellungs-QR auf dem Laptop. Den Code erhältst du dort ebenfalls.'),
       scannerButton(version), explain('issuance')),
     pastedQr(),
     el('details', { class: 'card wallet-settings' }, el('summary', {}, 'Wallet-Details'),
@@ -677,7 +676,7 @@ function home(wallet, version) {
       : [el('section', { class: 'card empty-state wallet-empty' },
         el('div', { class: 'wallet-outline', 'aria-hidden': 'true' }),
         el('h2', {}, 'Noch keine Ausweise'),
-        el('p', {}, 'Deine Wallet ist eingerichtet. Scanne den Ausstellungs-QR auf deinem Notebook, um deinen Mitarbeiterausweis zu erhalten.'))]);
+        el('p', {}, 'Hier findest du deine gespeicherten Mitarbeiterausweise.'))]);
   if (entries.length) pollStatuses(wallet, entries, views, version);
 }
 
@@ -694,8 +693,9 @@ async function render() {
       return;
     }
     const link = decodeOffer(location.hash);
-    const wallet = readStored('wallet');
-    if (!wallet) return onboarding(version);
+    const wallet = readStored('wallet') || await ensureWallet(version);
+    if (version !== renderVersion || !wallet) return;
+    walletInitialization = undefined;
     if (link) return await issuance(wallet, link, version);
     const id = currentRequestId();
     if (id) {
@@ -709,7 +709,7 @@ async function render() {
       el('h2', {}, 'Gerade nicht möglich'),
       el('p', {}, location.hash.startsWith('#offer=')
         ? 'Prüfe deine Verbindung zur Workshop-Zentrale und die Freigabe deiner Organisation. Scanne bei einem abgelaufenen Angebot einen neuen QR vom Notebook.'
-        : currentRequestId() ? 'Scanne den aktuellen QR am Empfang erneut, um einen neuen persönlichen Check-in-Versuch zu öffnen.'
+        : currentRequestId() ? 'Scanne den aktuellen Check-In-QR erneut, um einen neuen Versuch zu öffnen.'
           : 'Prüfe deine Verbindung zur Workshop-Zentrale. Gespeicherte Ausweise bleiben in diesem Browser erhalten.'),
       action(el('button', { type: 'button', class: 'secondary' }, 'Erneut versuchen'), render),
       action(el('button', { type: 'button', class: 'secondary' }, 'Zur Wallet'), goHome)));

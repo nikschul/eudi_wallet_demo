@@ -1,56 +1,65 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { fixture } from './helpers/hosted.js';
 
-void globalThis.fetch;
+const source = (file) => readFile(new URL(`../public/${file}`, import.meta.url), 'utf8');
 
-function mockGlobal(t, name, value) {
-  const previous = Object.getOwnPropertyDescriptor(globalThis, name);
-  Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
-  t.after(() => {
-    if (previous) Object.defineProperty(globalThis, name, previous);
-    else delete globalThis[name];
-  });
-}
+test('The landing page is the live Check-In and old kiosk links lead to the same entry point', async (t) => {
+  const f = await fixture(t);
+  const root = await f.call('/');
+  assert.equal(root.status, 200);
+  assert.match(root.data, /id="checkin-qr"/);
+  assert.match(root.data, /src="\/kiosk.js"/);
+  assert.match(root.data, /id="wallet-start"[^>]+href="\/wallet.html"[^>]*>Wallet öffnen/);
+  for (const route of ['/kiosk', '/kiosk.html']) {
+    const response = await fetch(`${f.base}${route}?display=tv`, { redirect: 'manual' });
+    assert.equal(response.status, 302);
+    assert.equal(response.headers.get('location'), '/?display=tv');
+    assert.equal((await f.call(route)).data, root.data);
+  }
+});
 
-for (const existingWallet of [false, true]) {
-  test(`Landing keeps organisation and wallet entry points distinct (${existingWallet ? 'existing' : 'new'} wallet)`, async (t) => {
-    const nodes = {
-      'wallet-hint': { hidden: true },
-      'wallet-start': { textContent: 'Wallet auf dem Handy öffnen', href: '/wallet.html' },
-      'organisation-start': { textContent: 'Organisation am Laptop einrichten', href: '/issuer.html' },
-      error: { hidden: true, textContent: '' },
-    };
-    mockGlobal(t, 'document', {
-      getElementById: (id) => nodes[id] || null,
-      querySelectorAll: () => [],
-    });
-    mockGlobal(t, 'window', { addEventListener() {} });
-    mockGlobal(t, 'navigator', {});
-    mockGlobal(t, 'isSecureContext', false);
-    mockGlobal(t, 'localStorage', {
-      getItem: () => existingWallet ? JSON.stringify({
-        did: 'did:test:holder', publicJwk: {}, privateJwk: {}, credentials: [],
-      }) : null,
-    });
-    t.mock.method(globalThis, 'fetch', async (url) => {
-      assert.equal(url, '/api/config');
-      return new Response(JSON.stringify({
-        publicUrl: 'https://workshop.example.org',
-        issuerSetupUrl: 'https://workshop.example.org/issuer.html',
-        eventTitle: 'Organisations-Workshop',
-      }));
-    });
-    await import(`../public/index.js?existing-wallet=${existingWallet}`);
-    const deadline = Date.now() + 1000;
-    while (nodes['organisation-start'].href === '/issuer.html' && nodes.error.hidden && Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 1));
-    }
-    assert.equal(nodes.error.hidden, true, nodes.error.textContent);
-    assert.equal(nodes['organisation-start'].href, 'https://workshop.example.org/issuer.html');
-    assert.equal(nodes['organisation-start'].textContent, 'Organisation am Laptop einrichten');
-    assert.equal(nodes['wallet-start'].href, 'https://workshop.example.org/wallet.html');
-    assert.equal(nodes['wallet-hint'].hidden, !existingWallet);
-    assert.equal(nodes['wallet-start'].textContent, existingWallet
-      ? 'Vorhandene Wallet öffnen' : 'Wallet auf dem Handy öffnen');
-  });
-}
+test('Every app area has the same navigation, neutral branding and its own area theme', async () => {
+  for (const [file, area, current] of [
+    ['index.html', 'checkin', '/'],
+    ['issuer.html', 'issuer', '/issuer.html'],
+    ['wallet.html', 'wallet', '/wallet.html'],
+    ['admin.html', 'checkin', undefined],
+  ]) {
+    const html = await source(file);
+    assert.match(html, new RegExp(`<body[^>]+data-area="${area}"`), file);
+    assert.match(html, /Wallet &amp; Check-In/, file);
+    assert.doesNotMatch(html, /EUDI|Empfang|Wallet schon|HttpOnly/, file);
+    const header = html.match(/<header\b[\s\S]*?<\/header>/)?.[0];
+    assert.ok(header, file);
+    const nav = header.match(/<nav\b[\s\S]*?<\/nav>/)?.[0];
+    assert.ok(nav, file);
+    const links = [...nav.matchAll(/<a\b([^>]*)>([^<]*)<\/a>/g)];
+    assert.deepEqual(links.map(([, attrs, label]) => [attrs.match(/href="([^"]*)"/)?.[1], label.trim()]),
+      [['/', 'Check-In'], ['/issuer.html', 'Aussteller'], ['/wallet.html', 'Wallet']], file);
+    const active = links.filter(([, attrs]) => attrs.includes('aria-current="page"'));
+    assert.equal(active.length, current ? 1 : 0, file);
+    if (current) assert.ok(active[0][1].includes(`href="${current}"`), file);
+  }
+});
+
+test('Organisation links on Check-In open a separate, isolated tab', async () => {
+  const html = await source('index.html');
+  const links = [...html.matchAll(/<a\b([^>]*href="\/issuer.html"[^>]*)>/g)];
+  assert.equal(links.length, 2, 'Both main navigation and setup entry retain the Check-In tab');
+  for (const [, attributes] of links) {
+    assert.match(attributes, /target="_blank"/);
+    assert.match(attributes, /rel="noopener noreferrer"/);
+  }
+});
+
+test('Installed wallet retains its direct entry point and generic app name', async () => {
+  const manifest = JSON.parse(await source('manifest.webmanifest'));
+  assert.equal(manifest.name, 'Wallet & Check-In');
+  assert.equal(manifest.start_url, '/wallet.html');
+  const wallet = await source('wallet.js');
+  assert.doesNotMatch(wallet, /Wallet schon erstellt|Wallet auf diesem Handy erstellen|function journey/);
+  const page = await source('wallet.html');
+  assert.match(page, /<button[^>]+id="install"[^>]+hidden/);
+});

@@ -35,7 +35,7 @@ async function start(t, directory, port) {
     }
   });
   const deadline = Date.now() + 10000;
-  while (!output.includes('EUDI-Demo:')) {
+  while (!output.includes('Wallet & Check-In:')) {
     if (child.exitCode !== null || child.signalCode !== null || Date.now() >= deadline) {
       throw new Error(`Server did not start: ${output}`);
     }

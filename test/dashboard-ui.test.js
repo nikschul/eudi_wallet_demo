@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { createContext, runInContext } from 'node:vm';
 import { createApp } from '../server/app.js';
 
-const source = (file) => readFileSync(new URL(`../public/${file}`, import.meta.url), 'utf8');
+const source = (file) => readFileSync(new URL(`../public/${file === 'kiosk.html' ? 'index.html' : file}`, import.meta.url), 'utf8');
 
 class Element {
   children = [];
@@ -359,11 +359,11 @@ test('Kiosk is passive with no click, expansion, search or scrolling dependencie
   assert.doesNotMatch(html, /<(?:details|summary|button|input|select)\b|tabindex=/);
   assert.doesNotMatch(script, /addEventListener\(['"](?:click|input)|clipboard|\.open\b/);
   assert.doesNotMatch(css, /overflow(?:-[xy])?:\s*(?:auto|scroll)|@keyframes/);
-  assert.match(css, /prefers-reduced-motion:\s*reduce/);
+  assert.match(source('styles.css') + css, /prefers-reduced-motion:\s*reduce/);
   assert.match(css, /grid-template-columns: minmax\(0, 1fr\)/);
   assert.match(html, /href="\/kiosk\.css"/);
-  assert.doesNotMatch(html, /href="\/styles\.css"/);
-  assert.match(html, /Mehrere Handys können gleichzeitig denselben QR scannen/);
+  assert.match(html, /href="\/styles\.css"/);
+  assert.match(script, /body: \{ mode: 'kiosk' \}/);
   assert.ok(html.indexOf('id="progress-list"') < html.indexOf('id="attempts"'));
   assert.ok(html.indexOf('id="attempts"') < html.indexOf('id="attendees"'));
 });
@@ -437,7 +437,7 @@ test('Kiosk shows verified, unverified, live and failed outcomes without opening
   assert.match(attempts.children[1].textContent, /Abgelehnt/);
   assert.match(attempts.children[1].textContent, /Behaupteter Name \(ungeprüft\)/);
   assert.match(attempts.children[1].textContent, /Credential-Status/);
-  assert.match(attempts.children[1].textContent, /Am Empfang klären, danach erneut scannen/);
+  assert.match(attempts.children[1].textContent, /Beim Check-In klären, danach erneut scannen/);
   assert.equal(attempts.querySelectorAll('details').length, 0);
   data.attempts.unshift({
     ...data.attempts[1], id: 'processing-attempt', status: 'processing',
@@ -551,7 +551,7 @@ test('Failed approval reports its error, preserves pending state and enables an 
   assert.equal(app.ids.get('notice').textContent, '');
 });
 
-test('Kiosk secondary QR is public organisation setup with a visible laptop URL and no copy control', () => {
+test('Check-In secondary QR is public organisation setup with a separate-tab entry and wallet link', () => {
   const app = surface('kiosk', fixture(12));
   const config = {
     publicUrl: 'https://workshop.example.org',
@@ -563,17 +563,18 @@ test('Kiosk secondary QR is public organisation setup with a visible laptop URL 
   assert.equal(app.ids.get('issuer-setup-qr').src, config.issuerSetupQrDataUrl);
   assert.equal(app.ids.get('issuer-setup-qr').hidden, false);
   assert.equal(app.ids.get('issuer-setup-link').href, config.issuerSetupUrl);
-  assert.equal(app.ids.get('issuer-setup-link').textContent, config.issuerSetupUrl);
+  assert.equal(app.ids.get('issuer-setup-link').textContent, 'Organisation anlegen ↗');
+  assert.equal(app.ids.get('wallet-start').href, 'https://workshop.example.org/wallet.html');
   assert.equal(app.ids.has('copy-issuer-setup'), false);
   const html = source('kiosk.html');
   assert.ok(html.indexOf('id="checkin-qr"') < html.indexOf('id="issuer-setup-qr"'));
   assert.match(html, /id="checkin-qr" width="640" height="640"/);
   assert.match(html, /id="issuer-setup-qr" width="112" height="112"/);
-  assert.match(html, /Organisation einrichten · am Laptop/);
-  assert.match(html, /Danach den Ausweisangebots-QR mit dem Handy scannen/);
+  assert.match(html, /Am Laptop eine Organisation einrichten/);
+  assert.match(html, /id="issuer-setup-link"[^>]*target="_blank"[^>]*rel="noopener noreferrer"/);
   assert.doesNotMatch(source('kiosk.js'), /startQrDataUrl|managementAccess|admin-token|org-access/);
-  assert.match(html, /<li>Wallet\/PWA öffnen<\/li>/);
-  assert.match(html, /„QR-Code scannen“ wählen/);
+  assert.match(html, /<li>Wallet auf dem Handy öffnen<\/li>/);
+  assert.match(html, /Diesen QR-Code in der Wallet scannen/);
   assert.doesNotMatch(html, /id="start-qr"/);
   for (const privateUrl of [
     `${config.issuerSetupUrl}#org-access=private`,
@@ -748,7 +749,7 @@ test('Kiosk initial failures are visible instead of false empty lists; configura
   assert.notEqual(app.ui.pagers.issuers.signature, '[]', 'Failure is not interpreted as an empty successful result');
   feed.failures.clear();
   await app.advance(1500);
-  assert.equal(app.ids.get('issuer-setup-link').textContent, feed.config.issuerSetupUrl);
+  assert.equal(app.ids.get('issuer-setup-link').textContent, 'Organisation anlegen ↗');
   assert.equal(app.ids.get('checkin-qr').hidden, false);
   assert.match(app.ids.get('progress-list').textContent, /Noch keine Organisation registriert/);
 });

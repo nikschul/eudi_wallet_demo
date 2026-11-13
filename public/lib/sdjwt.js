@@ -178,7 +178,7 @@ export async function verifyPresentation(presentation, { aud, nonce, isTrustedIs
     const withoutKb = presentation.slice(0, presentation.length - kb.length);
     if (kbp.sd_hash !== (await sha256b64(withoutKb))) throw new Error('Key-Binding passt nicht zur Presentation');
     if (kbp.nonce !== nonce || kbp.aud !== aud) throw new Error('Falsche Nonce oder falscher Empfänger (möglicher Replay-Angriff)');
-    step('Nonce und Empfänger stimmen: Presentation wurde frisch für diesen Check-in erstellt');
+    step('Nonce und Empfänger stimmen: Presentation wurde frisch für diesen Check-In erstellt');
 
     return { ok: true, steps, issuer: iss, holder: didFromJwk(payload.cnf.jwk), vct: payload.vct, claims };
   } catch (err) {

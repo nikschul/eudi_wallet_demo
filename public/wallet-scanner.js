@@ -3,7 +3,7 @@ import { decodeOffer, publicOrigin } from './lib/protocol.js';
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 
 export function validateWalletQr(value, configuredOrigin) {
-  const invalid = () => new Error('Bitte scanne einen Ausstellungs- oder Empfangs-QR dieser Workshop-Zentrale.');
+  const invalid = () => new Error('Bitte scanne einen Ausstellungs- oder Check-In-QR dieser Anwendung.');
   if (typeof value !== 'string' || value.length > 8192) throw invalid();
   let url;
   try { url = new URL(value); } catch { throw invalid(); }
@@ -116,7 +116,7 @@ export function createCameraScanner({
       if (!active(current)) { release(current); return; }
       current.engine = await current.decoder.createQrEngine();
       if (!active(current)) { release(current); return; }
-      onState('scanning', 'Halte den Ausstellungs- oder Empfangs-QR in die Kamera. Es werden keine Bilder übertragen.');
+      onState('scanning', 'Halte den Ausstellungs- oder Check-In-QR in die Kamera. Es werden keine Bilder übertragen.');
       current.timer = schedule(() => scan(current));
     } catch (error) {
       if (active(current)) fail(current, cameraError(error));

@@ -14,7 +14,9 @@ nicht migriert. **Nur erfundene Daten verwenden.**
 ## 1. Organisation am Laptop anlegen
 
 Öffne die zentrale Adresse mit `/issuer.html` **im Laptop-Browser**.
-Die Moderation zeigt die Einrichtungsadresse und den zugehörigen QR am Kiosk.
+Alternativ auf der Check-In-Startseite `/` **„Organisation anlegen“** wählen:
+Die Aussteller-Seite öffnet in einem neuen Tab, während der Check-In offen bleibt.
+Die Moderation zeigt den zugehörigen Einrichtungs-QR ebenfalls auf der Startseite.
 Der Einrichtungs-QR öffnet diese Organisationsseite, nicht ein Ausweisangebot.
 
 Wird die Seite direkt über `localhost` oder eine andere Adresse als die
@@ -43,6 +45,11 @@ ist nicht die persönliche Wallet; die Wallet samt privatem Schlüssel bleibt au
 dem Smartphone.
 
 ## 2. Freigabe abwarten
+
+Nach dem Anlegen zeigt der Assistent zunächst nur den Freigabestatus.
+Die Eingabefelder für einen Mitarbeiterausweis erscheinen erst nach der
+Freigabe. Bei der QR-Übergabe ersetzt die Übergabeansicht das Formular.
+Organisationsdetails und die Ausweisverwaltung sind ergänzend aufklappbar.
 
 Die Organisation erscheint automatisch bei der Moderation. Du musst nichts bei
 einer zweiten Zentrale registrieren und keinen DID-Fingerabdruck übertragen.
@@ -75,9 +82,9 @@ Auch vor einer automatischen Signatur prüft der Server die aktuelle Freigabe.
    Das funktioniert auch direkt in der installierten Wallet (PWA); für die Kamera
    muss die PWA nicht verlassen werden. Alternativ die Smartphone-Kamera nutzen
    oder den Angebotslink auf dem Smartphone öffnen.
-5. Falls noch keine Wallet vorhanden ist, diese dort **einmalig** einrichten und
-   mit dem Angebot fortfahren. Danach dieselbe Wallet unter derselben zentralen
-   Adresse und im selben Smartphone-Browser weiterverwenden.
+5. Die Wallet öffnet das Angebot **direkt**. Beim ersten Besuch wird der
+   Schlüssel automatisch angelegt; ein vorhandener Schlüssel bleibt erhalten.
+   Es gibt keinen Einrichtungsdialog und keine Bestätigung „Wallet schon erstellt“.
 6. Den am Laptop angezeigten **Ausgabecode auf dem Smartphone** eingeben.
    Die Wallet beweist zusätzlich den Besitz ihres eigenen Schlüssels.
    Nach richtigem Code und Schlüsselbeweis **signiert der Server automatisch**.
@@ -106,7 +113,7 @@ Die Freigabe der Organisation ist keine Freigabe einzelner Credentials.
 
 ## Ausweise verwalten und endgültig widerrufen
 
-Unter **„Ausweise verwalten & endgültig widerrufen“** findest du die dauerhaft
+Unter **„Ausweise verwalten & widerrufen“** findest du die dauerhaft
 zentral gespeicherten Ausgaben **deiner Organisation**, auch nach einem Neustart
 oder bei gesperrter Organisation. Die geschützte Liste aktualisiert sich etwa
 alle fünf Sekunden. Suche, Statusfilter und Seiten mit jeweils 20 Einträgen

@@ -1,8 +1,8 @@
-# EUDI Wallet Workshop
+# Wallet & Check-In
 
 Eine deutschsprachige Lernsimulation für digitale Mitarbeiterausweise:
 Am Notebook einen Ausweis vorbereiten, mit der Smartphone-Wallet verbinden
-und am gemeinsamen Empfang einchecken. Der Workshop zeigt
+und beim gemeinsamen Check-In vorzeigen. Die Anwendung zeigt
 den Unterschied zwischen **gültiger Signatur** und **Vertrauen in den Aussteller**.
 Zusätzlich wird der **Widerrufsstatus des einzelnen Ausweises** geprüft.
 
@@ -41,8 +41,20 @@ keinen Namen der bedienenden Person. Die Rollen heißen **Mitarbeitende**,
 |---|---|
 | `/issuer.html` | Öffentlicher Organisationsassistent; eigener Mandantenzugang per Cookie |
 | `/wallet.html` | Smartphone-Wallet |
-| `/kiosk.html` | Öffentliches Empfangs-Dashboard |
+| `/` | Check-In: Startseite, QR-Code und Live-Dashboard |
 | `/admin.html` | Private Verwaltung der Moderation; Admin-Token erforderlich |
+
+Alle Seiten verwenden dieselbe Navigation: **Check-In**, **Aussteller** und
+**Wallet**. Blau kennzeichnet den Check-In, Gelb die Aussteller-Seite und Grün
+die Wallet. Der Aussteller-Link auf der Startseite öffnet einen neuen Tab,
+damit der Check-In geöffnet bleibt. Alte Links auf `/kiosk.html` führen zur
+Startseite weiter.
+
+**Wallet öffnen** führt ohne Einrichtungsdialog zur Ausweisablage. Vorhandene
+Wallet-Schlüssel werden weiterverwendet; nur wenn keine Wallet gespeichert ist,
+wird automatisch eine angelegt. Der Aussteller-Assistent zeigt nacheinander
+Organisationsname, Freigabestatus, Ausweisformular und QR-Übergabe. Die
+Ausweisverwaltung bleibt als eigener aufklappbarer Bereich erreichbar.
 
 ## Voraussetzungen und Installation
 
@@ -197,13 +209,13 @@ schreibgeschütztem Root-Dateisystem, beschreibbarem Datenvolume und `/tmp`.
 1. **Nur für dich:** Den privaten Verwaltungslink aus den aktuellen App-Logs
    in einem nicht projizierten Browserfenster öffnen. Dieser Link schaltet
    `/admin.html` frei; weder Link noch Token an Teilnehmende geben.
-2. **Am Beamer:** Die öffentliche Workshop-Adresse mit `/kiosk.html` öffnen.
+2. **Am Beamer:** Die öffentliche Workshop-Adresse `/` öffnen.
    Der große QR dient dem Check-in, der kleinere der Organisationseinrichtung.
 3. **Für die Laptops:** Dieselbe öffentliche Adresse mit `/issuer.html`
    verteilen. Jede Gruppe legt ihre Organisation selbst im eigenen Browser an.
 4. **Für die Smartphones:** Dieselbe Adresse mit `/wallet.html` öffnen.
    Die Kamera startet über **„QR-Code scannen“** in der Wallet/PWA. Die Wallet
-   kann vorab oder beim ersten Ausweisangebot einmalig eingerichtet werden.
+   wird beim Öffnen automatisch vorbereitet; es gibt keinen Einrichtungsdialog.
 
 ### 4. Vor Beginn eine vollständige Proberunde durchführen
 
@@ -423,8 +435,9 @@ Optional für Entwicklung mit Node.js 24 LTS: `npm ci`, `npm run check`, `npm te
    Fingerabdruck und Zuordnung und gibt die Organisation frei.
    Erst danach sind Angebote möglich. Dies ist eine bewusste Vereinfachung
    unseres Workshops, keine universelle Voraussetzung für jede SSI-Ausstellung.
-2. **Wallet einmalig einrichten:** Auf dem Smartphone unter der festen
-   Workshop-Adresse, vorab oder beim ersten Angebots-QR. Weitere Scans verwenden
+2. **Wallet öffnen:** Auf dem Smartphone unter der festen Workshop-Adresse,
+   vorab oder direkt über den Angebots-QR. Der Schlüssel wird bei Bedarf
+   automatisch angelegt, ohne Einrichtungsdialog. Weitere Scans verwenden
    dieselbe Wallet und denselben Schlüssel innerhalb desselben Browserspeichers.
    Unter einem abweichenden Host wird keine zweite Wallet angelegt; die Seite
    leitet mit dem geöffneten QR zur konfigurierten Workshop-Adresse weiter.

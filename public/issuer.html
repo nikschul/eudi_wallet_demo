@@ -3,30 +3,33 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#123c7b">
+  <meta name="theme-color" content="#e7b629">
   <link rel="stylesheet" href="/styles.css">
   <link rel="stylesheet" href="/issuer.css">
   <script type="module" src="/issuer.js"></script>
-  <title>Organisation · Mitarbeiterausweise</title>
+  <title>Ausweise ausstellen · Wallet &amp; Check-In</title>
 </head>
-<body class="issuer-dashboard">
-  <header class="issuer-header">
-    <a class="issuer-brand" href="/"><span class="issuer-mark" aria-hidden="true">O</span>
-      <span>Eure Organisation<small>Zentraler Workshop · Laptop-Verwaltung</small></span></a>
+<body class="issuer-dashboard" data-area="issuer">
+  <header class="site-header">
+    <a class="brand" href="/"><span class="brand-mark" aria-hidden="true">W</span> Wallet &amp; Check-In</a>
+    <nav aria-label="Hauptnavigation">
+      <a href="/" data-area="checkin">Check-In</a>
+      <a href="/issuer.html" data-area="issuer" aria-current="page">Aussteller</a>
+      <a href="/wallet.html" data-area="wallet">Wallet</a>
+    </nav>
   </header>
   <main class="issuer-shell">
-    <div class="page-heading"><span class="eyebrow">In drei Schritten zum Mitarbeiterausweis</span>
-      <h1>Organisation anlegen. Freigabe abwarten. Ausweise ausstellen.</h1>
-      <p>Diese Seite bleibt auf dem Laptop. Mitarbeitende empfangen ihren Ausweis
-        in der privaten Smartphone-Wallet. Keine Installation oder eigener Server nötig.</p></div>
-    <p class="demo-warning"><strong>Workshop-Lernsimulation:</strong> Nur erfundene Daten verwenden.
-      Organisationszugang und private Wiederherstellungslinks nicht weitergeben.</p>
+    <div class="page-heading">
+      <span class="eyebrow">Aussteller</span>
+      <h1>Ausweise ausstellen</h1>
+      <p>Organisation einrichten, freigeben lassen und Ausweise an die Wallet senden.</p>
+    </div>
+    <p class="demo-warning">Nur erfundene Daten verwenden. Organisationszugang und Wiederherstellungslinks privat halten.</p>
     <div id="error" class="message error" role="alert" hidden></div>
     <div id="notice" class="message notice" role="status" hidden></div>
     <div id="app" class="stack" hidden><p>Organisation wird geladen …</p></div>
     <noscript>Bitte aktiviere JavaScript, um die Organisation zu verwalten.</noscript>
-    <footer>Workshop-Lernsimulation · Keine echten Personaldaten verwenden.
-      Der Organisationsschlüssel bleibt auf dem zentralen Server, der Wallet-Schlüssel auf dem Smartphone.</footer>
+    <footer>Simulation · Nur erfundene Daten verwenden.</footer>
   </main>
 </body>
 </html>

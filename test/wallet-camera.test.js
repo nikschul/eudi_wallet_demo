@@ -157,7 +157,7 @@ test('No-QR frames keep scanning; invalid QR and a disconnected camera stop with
   assert.deepEqual(state.decoded, []);
   state.decoder.scanImage = async () => ({ data: 'https://external.example.org/secret' });
   await state.frame();
-  assert.match(state.states.at(-1).message, /dieser Workshop-Zentrale/);
+  assert.match(state.states.at(-1).message, /dieser Anwendung/);
   assert.equal(state.states.at(-1).state, 'error');
   assert.equal(state.video.srcObject, null);
   assert.equal(state.frames.size, 0);
@@ -253,7 +253,7 @@ test('Hidden/pagehide/navigation cancellation invalidates late decoding and does
   assert.deepEqual(state.states.map(({ state }) => state), ['starting', 'scanning']);
 });
 
-test('PWA v9 caches only explicit same-origin shell/decoder assets, never APIs, camera media or arbitrary QR targets', async () => {
+test('PWA v11 caches only explicit same-origin shell/decoder assets, never APIs, camera media or arbitrary QR targets', async () => {
   const handlers = new Map();
   let shell;
   const context = {
@@ -261,7 +261,7 @@ test('PWA v9 caches only explicit same-origin shell/decoder assets, never APIs, 
     self: { location: { origin }, addEventListener: (name, handler) => handlers.set(name, handler) },
     caches: {
       open: async (name) => {
-        assert.equal(name, 'eudi-shell-v9');
+        assert.equal(name, 'eudi-shell-v11');
         return { addAll: async (paths) => { shell = Array.from(paths); } };
       },
     },

@@ -12,13 +12,18 @@ Der private Verwaltungszugang bleibt am Notebook und wird nicht weitergegeben.
 Auf dem Smartphone ist **kein Admin-Token** nötig; dort nur die Angebots- und
 Empfangs-QR-Codes scannen, niemals den Verwaltungslink.
 
-## Wallet einmalig einrichten
+## Wallet öffnen
+
+Die Startseite `/` ist der **Check-In**. Über die einheitliche Navigation
+wechselst du zwischen **Check-In**, **Aussteller** und **Wallet**.
+**„Wallet öffnen“** auf der Startseite oder **„Wallet“** im Menü führt direkt
+zu deinen Ausweisen. Es gibt keine zusätzliche Abfrage zur Wallet-Einrichtung.
 
 Die Wallet gehört zum Smartphone-Browser unter der festen öffentlichen
-**Workshop-Adresse**, nicht zum Issuer und nicht zum Notebook. Du kannst sie
-vorab unter dieser Adresse einrichten oder beim ersten Angebots-QR. Beide
-Einstiege führen zur selben Wallet. Jeder weitere Angebots- oder Empfangs-QR
-verwendet deren vorhandenen Schlüssel; eine erneute Einrichtung ist nicht nötig.
+**Workshop-Adresse**, nicht zum Issuer und nicht zum Notebook. Öffne sie vorab
+oder direkt über den Angebots-QR. Die Vorbereitung läuft automatisch im
+Hintergrund, ohne Einrichtungsdialog oder Bestätigung einer vorhandenen Wallet.
+Jeder weitere Angebots- oder Empfangs-QR verwendet deren gespeicherten Schlüssel.
 
 Links von der Gerätekamera und Scans in der Wallet verwenden unter derselben
 Adresse und im selben Browserspeicher automatisch die vorhandene Wallet.
@@ -57,7 +62,7 @@ Ausstellung und Check-in brauchen weiterhin eine Verbindung zur Zentrale.
 
 ## Notebook → Handy → Kiosk
 
-**„Meine Wallet“ öffnet immer deine Ausweisablage**, auch wenn du vorher
+**„Wallet“ im Menü öffnet immer deine Ausweisablage**, auch wenn du vorher
 eine Präsentationsanfrage geöffnet hattest. Dort ist kein Check-in-Schritt aktiv.
 Eine Anfrage erscheint erst über den Empfangs-QR beziehungsweise dessen bewusst
 geöffneten oder eingefügten QR-Link, nicht durch den Wallet-Navigationslink.
@@ -70,8 +75,8 @@ Empfangs-QR erneut scannen.
    Organisation ist fest vorgegeben. Ein QR-Angebot erstellen.
 2. **Handy:** In der Wallet **„QR-Code scannen“** wählen und den Angebots-QR
    scannen. Alles bleibt unter der festen **zentralen HTTPS-Adresse**.
-   Eine vorhandene Wallet wird direkt verwendet. Nur beim allerersten Besuch
-   einmalig einrichten; das geöffnete Angebot bleibt dabei erhalten.
+   Die Wallet wird direkt verwendet und bei Bedarf automatisch vorbereitet.
+   Das geöffnete Angebot bleibt dabei erhalten.
 3. **Handy:** Den sechsstelligen **Ausgabecode direkt unter dem Angebots-QR am Notebook** in der Wallet
    eingeben und **„Ausgabecode prüfen & Ausweis empfangen“** wählen. Die Wallet
    zeigt den erwarteten Code nicht selbst an. Bei einer falschen Eingabe
@@ -88,7 +93,7 @@ Empfangs-QR erneut scannen.
    Ausweisen zuerst die gewünschte Organisation beziehungsweise den Ausweis
    auswählen. Es wird nicht automatisch der neueste verwendet.
 6. **Datenfreigabe:** Vor-/Nachname sind für die Anwesenheitskontrolle
-   erforderlich. Die Vorschau zeigt **„Empfang erhält“** und **„Nicht als
+   erforderlich. Die Vorschau zeigt **„Beim Check-In geteilt“** und **„Nicht als
    Attribut geteilt“**. Die Rolle bleibt freiwillig; die ausstellende
    Organisation ist über ihre Signatur ohnehin erkennbar.
 7. **Bestätigen:** **„Freigeben & einchecken“** öffnet die abbrechbare

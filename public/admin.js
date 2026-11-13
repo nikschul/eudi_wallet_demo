@@ -59,7 +59,7 @@ function createIssuerView(issuer) {
   view.approve = el('button', { type: 'button' });
   view.approve.addEventListener('click', () => run(async () => {
     if (view.busy || view.issuer.state === 'approved') return;
-    if (!confirm(`Organisation „${view.issuer.name}“ freigeben? Der Empfang vertraut dann ihrem Ausstellerschlüssel. Einzelne Ausweise werden hier nicht freigegeben.`)) return;
+    if (!confirm(`Organisation „${view.issuer.name}“ freigeben? Ihren Ausweisen wird dann beim Check-In vertraut.`)) return;
     view.busy = true;
     updateIssuerActions(view);
     try {

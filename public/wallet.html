@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#179C7D">
+  <meta name="theme-color" content="#197352">
   <meta name="issuer-origins" content="[]">
   <meta name="wallet-origin" content="">
   <link rel="manifest" href="/manifest.webmanifest">
@@ -13,20 +13,29 @@
   <link rel="stylesheet" href="/wallet-scanner.css">
   <link rel="stylesheet" href="/wallet-presentation.css">
   <script type="module" src="/wallet.js"></script>
-  <title>Meine Wallet · EUDI Demo</title>
+  <title>Meine Wallet · Wallet &amp; Check-In</title>
 </head>
-<body>
+<body data-area="wallet">
   <header class="site-header">
-    <a class="brand" href="/"><span class="brand-mark" aria-hidden="true">W</span> EUDI <span class="brand-light">/ Demo</span></a>
-    <nav aria-label="Hauptnavigation"><a href="/wallet.html" aria-current="page">Meine Wallet</a><a href="/">Workshop</a></nav>
+    <a class="brand" href="/"><span class="brand-mark" aria-hidden="true">W</span> Wallet &amp; Check-In</a>
+    <nav aria-label="Hauptnavigation">
+      <a href="/" data-area="checkin">Check-In</a>
+      <a href="/issuer.html" data-area="issuer">Aussteller</a>
+      <a href="/wallet.html" data-area="wallet" aria-current="page">Wallet</a>
+    </nav>
   </header>
   <main class="shell mobile-shell">
     <h1>Meine Wallet</h1>
     <div id="error" class="message error" role="alert" hidden></div>
     <div id="notice" class="message notice" role="status" hidden></div>
     <div id="app" class="stack"><p>Deine Wallet wird geladen …</p></div>
+    <details class="explanation">
+      <summary>Als App installieren</summary>
+      <p>Auf dem iPhone: In Safari „Teilen“ → „Zum Home-Bildschirm“ wählen.</p>
+      <button id="install" type="button" class="secondary" hidden>Wallet installieren</button>
+    </details>
     <noscript>Bitte aktiviere JavaScript, um deine Wallet zu nutzen.</noscript>
-    <footer>Deine privaten Schlüssel bleiben in diesem Browser.</footer>
+    <footer>Simulation · Nur erfundene Daten verwenden.</footer>
   </main>
 </body>
 </html>

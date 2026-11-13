@@ -12,8 +12,8 @@ services:
       HOST_PORT: ${PORT:-3000}
       PUBLIC_URL: ${PUBLIC_URL:?PUBLIC_URL auf die zentrale oeffentliche HTTPS-Adresse setzen}
       DATA_DIR: /app/data
-      VERIFIER_NAME: ${VERIFIER_NAME:-Fraunhofer ISST – Empfang}
-      EVENT_TITLE: ${EVENT_TITLE:-EUDI Wallet Workshop}
+      VERIFIER_NAME: ${VERIFIER_NAME:-Check-In}
+      EVENT_TITLE: ${EVENT_TITLE:-Wallet & Check-In}
     ports:
       - "127.0.0.1:${PORT:-3000}:3000"
     volumes:

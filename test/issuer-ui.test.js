@@ -54,6 +54,21 @@ function input(node, name) { return find(node, (child) => child.tagName === 'inp
 function byClass(node, name) { return find(node, (child) => child.className?.split(' ').includes(name)); }
 function roleSelect(node) { return find(node, (child) => child.tagName === 'select' && child.attributes.name === 'role'); }
 function currentStep(node) { return byClass(node, 'issuer-progress').children.findIndex((child) => child.attributes['aria-current'] === 'step') + 1; }
+function isVisible(node) {
+  for (let current = node; current; current = current.parent) {
+    if (current.hidden) return false;
+    if (current.parent?.tagName === 'details' && !current.parent.open && current.parent.children[0] !== current) return false;
+  }
+  return true;
+}
+function visibleText(node) {
+  if (!(node instanceof Element)) return node;
+  if (!isVisible(node)) return '';
+  return node.children.map(visibleText).join('');
+}
+function visibleInputs(node) {
+  return findAll(node, (child) => ['input', 'select'].includes(child.tagName) && isVisible(child));
+}
 async function settle() {
   for (let count = 0; count < 4; count += 1) await new Promise((resolve) => setImmediate(resolve));
 }
@@ -252,9 +267,10 @@ async function fixture(t, options = {}) {
 test('Issuer HTML is a central organisation workflow without operator or admin-token UI', async () => {
   const html = await readFile(new URL('../public/issuer.html', import.meta.url), 'utf8');
   const source = await readFile(new URL('../public/issuer.js', import.meta.url), 'utf8');
-  assert.match(html, /Organisation anlegen\. Freigabe abwarten\. Ausweise ausstellen\./);
-  assert.match(html, /Keine Installation oder eigener Server nötig/);
-  assert.doesNotMatch(html, /Admin-Token|admin-token|Server-Logs|ausstellende Person|eigenständiger Issuer/);
+  assert.match(html, /<script[^>]+src="\/issuer\.js"/);
+  assert.match(html, /id="app"/);
+  assert.match(html, /id="error"[^>]+role="alert"/);
+  assert.doesNotMatch(html, /\bEUDI\b|Admin-Token|admin-token|Server-Logs|ausstellende Person|eigenständiger Issuer/);
   assert.doesNotMatch(source, /managementAccess|employeeName|adminToken|\/approve|\/register|\/setup|workshopUrl/);
 });
 
@@ -266,6 +282,8 @@ test('Anonymous browser creates only an organisation name, then waits for host a
   assert.equal(input(f.app, 'employeeName'), undefined);
   assert.equal(input(f.app, 'token'), undefined);
   assert.match(f.app.textContent, /HttpOnly-Cookie|unveränderlich|nicht mehr änderbar/);
+  assert.doesNotMatch(visibleText(f.app), /HttpOnly|Wiederherstellungslink|Fingerprint/);
+  assert.deepEqual(visibleInputs(f.app).map((node) => node.attributes.name), ['name']);
   input(f.app, 'name').value = '  Neue Organisation  ';
   await f.submit(find(f.app, (node) => node.tagName === 'form'));
   const request = f.requests.find(({ route }) => route === '/api/organisations');
@@ -274,6 +292,9 @@ test('Anonymous browser creates only an organisation name, then waits for host a
   assert.match(f.app.textContent, /Wartet auf Freigabe/);
   assert.equal(input(f.app, 'name'), undefined);
   assert.equal(byClass(f.app, 'offer-fields').disabled, true);
+  assert.deepEqual(visibleInputs(f.app), []);
+  assert.equal(isVisible(button(f.app, 'QR-Angebot erstellen')), false);
+  assert.equal(isVisible(byClass(f.app, 'fixed-organisation')), true);
   assert.match(byClass(f.app, 'fixed-organisation').textContent, /Neue Organisation/);
 });
 
@@ -293,29 +314,72 @@ test('Pending, approved and suspended states update in place and preserve employ
   assert.equal(currentStep(f.app), 2);
   const fields = byClass(f.app, 'offer-fields');
   const givenName = input(f.app, 'given_name');
+  const familyName = input(f.app, 'family_name');
   const role = roleSelect(f.app);
-  givenName.value = 'Nicht verlieren';
-  role.value = 'Teamleitung';
+  assert.deepEqual(visibleInputs(f.app), []);
+  assert.equal(isVisible(fields), false);
+  assert.match(visibleText(f.app), /Wartet auf Freigabe/);
+  assert.doesNotMatch(visibleText(f.app), /Für wen|Vorname|Nachname|HttpOnly|Fingerprint|alle 5 Sekunden/);
   f.state.organisation = organisation('approved');
   await f.fire(5000);
   assert.match(f.app.textContent, /Freigegeben/);
   assert.equal(currentStep(f.app), 3);
   assert.equal(fields.disabled, false);
+  assert.equal(isVisible(fields), true);
+  assert.deepEqual(visibleInputs(f.app).map((node) => node.attributes.name), ['given_name', 'family_name', 'role']);
+  givenName.value = 'Nicht verlieren';
+  familyName.value = 'Auch behalten';
+  role.value = 'Teamleitung';
+  await f.fire(5000);
+  assert.equal(givenName.value, 'Nicht verlieren');
   f.state.organisation = organisation('suspended');
   await f.fire(5000);
   assert.match(f.app.textContent, /Gesperrt/);
   assert.equal(fields.disabled, true);
+  assert.equal(currentStep(f.app), 2);
+  assert.equal(isVisible(fields), false);
+  assert.deepEqual(visibleInputs(f.app), []);
+  assert.match(visibleText(f.app), /Ausweise verwalten & widerrufen/);
   f.state.statusResponse = Response.json({ error: 'Zentrale nicht erreichbar' }, { status: 503 });
   await f.fire(5000);
   assert.match(f.app.textContent, /Organisationsstatus konnte nicht geprüft werden: Zentrale/);
   assert.equal(fields.disabled, true);
+  assert.equal(isVisible(fields), false);
   f.state.statusResponse = null;
   f.state.organisation = organisation('approved');
   await f.fire(5000);
   assert.equal(input(f.app, 'given_name'), givenName);
   assert.equal(givenName.value, 'Nicht verlieren');
+  assert.equal(familyName.value, 'Auch behalten');
   assert.equal(role.value, 'Teamleitung');
   assert.equal(fields.disabled, false);
+  assert.equal(isVisible(fields), true);
+});
+
+test('Unverified organisation trust hides issuance until checked and fails closed on malformed status', async (t) => {
+  const held = deferred();
+  const f = await fixture(t, { organisation: organisation('approved'), heldStatus: held });
+  const fields = byClass(f.app, 'offer-fields');
+  assert.equal(currentStep(f.app), 2);
+  assert.equal(fields.disabled, true);
+  assert.deepEqual(visibleInputs(f.app), []);
+  assert.match(visibleText(f.app), /Organisationsstatus wird geprüft/);
+  held.resolve(Response.json({ organisation: organisation('approved'), roles }));
+  await settle();
+  assert.equal(isVisible(fields), true);
+  input(f.app, 'given_name').value = 'Erika';
+  f.state.statusResponse = Response.json({ organisation: organisation('approved'), roles: ['Admin'] });
+  await f.fire(5000);
+  assert.equal(isVisible(fields), false);
+  assert.equal(fields.disabled, true);
+  assert.equal(currentStep(f.app), 2);
+  assert.match(visibleText(f.app), /Neue Ausgaben bleiben bis zur Bestätigung pausiert/);
+  await f.submit(fields.parent);
+  assert.equal(f.requests.some(({ route }) => route === '/api/issuer/offers'), false);
+  f.state.statusResponse = null;
+  await f.fire(5000);
+  assert.equal(isVisible(fields), true);
+  assert.equal(input(f.app, 'given_name').value, 'Erika');
 });
 
 test('Offer uses exactly three roles and fixed read-only organisation; forged form fields are not submitted', async (t) => {
@@ -354,10 +418,20 @@ test('Offer automatically advances offered → bound → issued → accepted wit
   const panel = await f.createOffer();
   const qr = byClass(panel, 'offer-qr');
   const metadata = byClass(panel, 'raw-data');
+  assert.equal(isVisible(panel), true);
+  assert.equal(isVisible(byClass(f.app, 'offer-fields')), false);
+  assert.deepEqual(visibleInputs(f.app), []);
+  assert.match(visibleText(panel), /Scanne den QR-Code mit deinem Smartphone oder in der Wallet\. Gib dort den Ausgabecode ein\./);
+  assert.doesNotMatch(visibleText(panel), /einmalig einrichten|automatisch vorbereitet|PWA|Schlüsselbeweis|transactionCode/);
+  const phoneLink = find(panel, (node) => node.tagName === 'a' && node.textContent === 'Angebotslink für das Smartphone');
+  assert.equal(isVisible(phoneLink), true);
+  assert.equal(phoneLink.attributes.href, f.state.offer.url);
+  assert.equal(phoneLink.attributes.target, '_blank');
+  assert.equal(phoneLink.attributes.rel, 'noopener noreferrer');
+  assert.match(visibleText(panel), /Angebot gültig bis .*QR und Link nicht öffentlich teilen\./);
   metadata.open = true;
   assert.match(panel.textContent, /Angeboten · Wartet auf Smartphone/);
   assert.equal(byClass(panel, 'pairing-code').textContent, '123456');
-  assert.match(panel.textContent, /QR-Code scannen.*PWA/);
   assert.doesNotMatch(metadata.textContent, /123456|transactionCode/);
   const next = button(panel, 'Weiteren Mitarbeiterausweis vorbereiten');
   assert.equal(next.hidden, true);
@@ -366,11 +440,12 @@ test('Offer automatically advances offered → bound → issued → accepted wit
     await f.fire(1800);
     assert.equal(byClass(panel, 'pairing-code').textContent, '');
     assert.equal(byClass(panel, 'issuance-code').hidden, true);
-    assert.match(panel.textContent, /Ausgabecode und Wallet-Schlüsselbeweis geprüft/);
+    assert.match(panel.textContent, /Wallet verbunden · Keine erneute Codeeingabe nötig/);
     assert.equal(byClass(panel, 'offer-qr'), qr);
     assert.equal(byClass(panel, 'raw-data'), metadata);
     assert.equal(metadata.open, true);
     assert.equal(next.hidden, status !== 'accepted');
+    assert.equal(isVisible(byClass(f.app, 'offer-fields')), false);
     assert.doesNotMatch(panel.textContent, /123456/);
   }
   assert.match(panel.textContent, /Gespeichert · Die Wallet hat den Empfang bestätigt/);
@@ -384,6 +459,8 @@ test('Offer automatically advances offered → bound → issued → accepted wit
   assert.equal(panel.children.length, 0);
   assert.equal(input(f.app, 'given_name').value, '');
   assert.equal(roleSelect(f.app).value, 'Mitarbeitende');
+  assert.equal(isVisible(byClass(f.app, 'offer-fields')), true);
+  assert.equal(input(f.app, 'given_name').focused, true);
   assert.equal(f.requests.filter(({ route }) => route === '/api/issuer/offers').length, 1);
 });
 
@@ -393,12 +470,17 @@ test('Active QR and details survive suspension, polling and bfcache restoration'
   const qr = byClass(panel, 'offer-qr');
   const details = byClass(panel, 'raw-data');
   details.open = true;
+  await f.fire(5000);
+  assert.equal(isVisible(byClass(f.app, 'offer-fields')), false);
   f.state.organisation = organisation('suspended');
   await f.fire(5000);
   await f.fire(1800);
   assert.equal(byClass(panel, 'offer-qr'), qr);
   assert.equal(details.open, true);
   assert.equal(panel.hidden, false);
+  assert.equal(currentStep(f.app), 3);
+  assert.equal(isVisible(byClass(f.app, 'offer-fields')), false);
+  assert.match(visibleText(f.app), /Gesperrt/);
   f.events.get('pagehide')();
   assert.equal(f.timers.size, 0);
   f.events.get('pageshow')({ persisted: true });
@@ -407,6 +489,44 @@ test('Active QR and details survive suspension, polling and bfcache restoration'
   assert.equal(details.open, true);
   assert.equal(f.requests.filter(({ route }) => route === '/api/issuer/offers').length, 1);
   assert.equal([...f.timers.values()].filter(({ delay }) => delay === 5000).length, 2);
+});
+
+test('Next person action rechecks trust before revealing a reset form, including suspension and outages', async (t) => {
+  const f = await fixture(t, { organisation: organisation('approved') });
+  const fields = byClass(f.app, 'offer-fields');
+  const panel = await f.createOffer();
+  f.state.offer = { ...f.state.offer, status: 'accepted' };
+  await f.fire(1800);
+  f.state.organisation = organisation('suspended');
+  const held = deferred();
+  f.state.heldStatus = held;
+  await f.click(panel, 'Weiteren Mitarbeiterausweis vorbereiten');
+  assert.equal(panel.hidden, true);
+  assert.equal(isVisible(fields), false);
+  assert.equal(input(f.app, 'given_name').value, '');
+  held.resolve(Response.json({ organisation: f.state.organisation, roles }));
+  await settle();
+  assert.equal(isVisible(fields), false);
+  assert.equal(fields.disabled, true);
+  assert.match(visibleText(f.app), /Gesperrt/);
+  assert.match(visibleText(f.app), /Ausweise verwalten & widerrufen/);
+  f.state.organisation = organisation('approved');
+  await f.fire(5000);
+  assert.equal(isVisible(fields), true);
+  f.state.offer = { ...f.state.offer, status: 'offered' };
+  await f.createOffer();
+  f.state.offer = { ...f.state.offer, status: 'expired' };
+  await f.fire(1800);
+  f.state.statusResponse = Response.json({ error: 'Zentrale nicht erreichbar' }, { status: 503 });
+  await f.click(panel, 'Weiteren Mitarbeiterausweis vorbereiten');
+  assert.equal(isVisible(fields), false);
+  assert.equal(fields.disabled, true);
+  assert.match(visibleText(f.app), /Neue Ausgaben bleiben bis zur Bestätigung pausiert/);
+  f.state.statusResponse = null;
+  await f.fire(5000);
+  assert.equal(isVisible(fields), true);
+  assert.equal(roleSelect(f.app).value, 'Mitarbeitende');
+  assert.equal(f.requests.filter(({ route }) => route === '/api/issuer/offers').length, 2);
 });
 
 test('Missing six-digit code is an explicit error and polling can recover without creating another offer', async (t) => {
@@ -479,6 +599,11 @@ test('Refreshes never overlap, pause while hidden, and discard pre-bfcache respo
 test('List failure is distinct from an empty list and does not prevent organisation status checks', async (t) => {
   const f = await fixture(t, { credentialsError: true });
   const panel = byClass(f.app, 'credentials-panel');
+  assert.equal(panel.tagName, 'details');
+  assert.equal(panel.open, false);
+  assert.match(visibleText(panel), /Laden fehlgeschlagen/);
+  assert.doesNotMatch(visibleText(panel), /Datenspeicher/);
+  panel.open = true;
   assert.match(panel.textContent, /Ausweisliste konnte nicht geladen werden: Datenspeicher/);
   assert.match(panel.textContent, /Keine verlässliche Ausweisliste/);
   assert.doesNotMatch(panel.textContent, /Noch keine Ausweise ausgestellt/);
@@ -494,7 +619,14 @@ test('Suspended organisation retains searchable paginated list, open details and
     records: Array.from({ length: 45 }, (_, index) => credential(index)) });
   assert.equal(byClass(f.app, 'offer-fields').disabled, true);
   const panel = byClass(f.app, 'credentials-panel');
+  assert.equal(isVisible(byClass(f.app, 'offer-fields')), false);
+  assert.equal(panel.tagName, 'details');
+  assert.equal(panel.open, false);
+  assert.match(visibleText(panel), /Ausweise verwalten & widerrufen · 45/);
+  assert.deepEqual(visibleInputs(f.app), []);
+  panel.open = true;
   const list = byClass(panel, 'credential-list');
+  assert.equal(isVisible(find(panel, (node) => node.attributes.type === 'search')), true);
   assert.equal(list.children.length, 20);
   const entry = list.children[0];
   entry.open = true;
@@ -503,6 +635,7 @@ test('Suspended organisation retains searchable paginated list, open details and
   const checkbox = input(entry, 'confirmRevocation');
   checkbox.checked = true;
   await f.fire(5000);
+  assert.equal(panel.open, true);
   assert.equal(list.children[0], entry);
   assert.equal(entry.open, true);
   assert.equal(confirmation.hidden, false);

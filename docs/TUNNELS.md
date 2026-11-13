@@ -28,7 +28,7 @@ hier keinen zweiten Tunnel starten.
    lokalen sowie öffentlichen Health-Endpunkt prüfen.
 5. **Verteilen:** Nur die öffentlichen Links unter derselben Origin teilen:
    `/issuer.html` für den Organisationsassistenten, `/wallet.html` für die
-   Smartphone-Wallet und `/kiosk.html` für den Empfang. `/admin.html` und
+   Smartphone-Wallet und `/` für den Check-In. `/admin.html` und
    dessen Freischalt-Link mit dem automatisch erzeugten Token bleiben privat.
 
 Der Tunnel kann seine Adresse bereits vergeben, bevor die App läuft.

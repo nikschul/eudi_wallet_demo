@@ -75,7 +75,7 @@ Unter derselben öffentlichen HTTPS-Adresse:
 | Für wen? | Seite |
 |---|---|
 | Nur du als Host | `/admin.html`, über den privaten Verwaltungslink |
-| Fernseher / Beamer | `/kiosk.html` |
+| Fernseher / Beamer und allgemeiner Einstieg | `/` (Check-In) |
 | Laptops der Teilnehmenden | `/issuer.html` |
 | Smartphones | `/wallet.html` |
 
@@ -83,13 +83,19 @@ Nur die öffentlichen Links verteilen, niemals die Logs oder den privaten
 Verwaltungslink. Teilnehmende benötigen weder Docker noch eigene Tunnel,
 Registry-Logins oder Admin-Token.
 
+Die Navigation ist überall **Check-In · Aussteller · Wallet**. Der
+Aussteller-Link auf der Check-In-Seite öffnet einen neuen Tab; der Check-In
+bleibt so für die anschließende Proberunde offen. **Wallet öffnen** führt
+direkt zur Wallet, ohne Einrichtungsabfrage.
+
 ## 5. Vor Beginn eine Proberunde durchführen
 
 1. Am Laptop eine Testorganisation anlegen.
 2. In deiner Verwaltung Organisation prüfen und freigeben.
 3. Am Laptop einen Mitarbeiterausweis mit Testnamen und Rolle anbieten.
 4. Am Smartphone in der Wallet **„QR-Code scannen“** wählen und den Angebots-QR
-   scannen. Beim ersten Besuch einmalig die Wallet einrichten.
+   scannen. Die Wallet wird bei Bedarf automatisch vorbereitet, ohne
+   Einrichtungsdialog oder Bestätigung einer vorhandenen Wallet.
 5. Den sechsstelligen Laptop-Code eingeben und den Ausweis speichern.
 6. Den großen Kiosk-QR in derselben Wallet scannen. Bei mehreren passenden
    Ausweisen einen bewusst auswählen und die Datenfreigabe prüfen.

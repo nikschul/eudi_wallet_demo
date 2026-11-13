@@ -13,7 +13,8 @@ test('Hosted public config has shared-origin setup QR, pages, verifier name and 
   const config = (await f.call('/api/config')).data;
   assert.equal(config.publicUrl, 'https://workshop.example.org');
   assert.equal(config.issuerSetupUrl, 'https://workshop.example.org/issuer.html');
-  assert.equal(config.verifierName, 'Fraunhofer ISST – Empfang');
+  assert.equal(config.verifierName, 'Check-In');
+  assert.equal(config.eventTitle, 'Wallet & Check-In');
   assert.deepEqual(config.roles, ROLES);
   for (const key of ['startQrDataUrl', 'issuerSetupQrDataUrl']) assert.match(config[key], /^data:image\/png;base64,/);
   noSecrets(config);
@@ -288,7 +289,7 @@ test('Page aliases preserve query; malformed JSON and obsolete APIs fail explici
   for (const name of ['wallet', 'issuer', 'kiosk', 'admin']) {
     const response = await fetch(`${f.base}/${name}?req=example`, { redirect: 'manual' });
     assert.equal(response.status, 302);
-    assert.equal(response.headers.get('location'), `/${name}.html?req=example`);
+    assert.equal(response.headers.get('location'), name === 'kiosk' ? '/?req=example' : `/${name}.html?req=example`);
   }
   for (const route of ['/api/issuers', '/api/issuers/challenge']) {
     assert.equal((await f.call(route, { body: {} })).status, 404);

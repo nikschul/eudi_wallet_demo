@@ -8,8 +8,9 @@
   max-height: 60vh;
   aspect-ratio: 3 / 4;
   object-fit: contain;
-  background: #102b28;
-  border-radius: 1rem;
+  background: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
 }
 
 .wallet-scanner .scanner-status {

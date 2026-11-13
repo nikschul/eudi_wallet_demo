@@ -22,8 +22,8 @@ const vct = EMPLOYEE_VCT;
 export async function createApp({
   publicUrl = 'http://localhost:3000',
   trustMode = 'manual',
-  verifierName = 'Fraunhofer ISST – Empfang',
-  eventTitle = 'EUDI Wallet Workshop',
+  verifierName = 'Check-In',
+  eventTitle = 'Wallet & Check-In',
   dataDirectory = defaultDataDirectory,
   clock = () => Date.now(),
 } = {}) {
@@ -94,7 +94,7 @@ export async function createApp({
 
   function findRequest(id) {
     const request = requests.get(id);
-    if (!request) throw new HttpError(404, 'Diese Check-in-Anfrage wurde nicht gefunden. Bitte scanne den aktuellen QR-Code.');
+    if (!request) throw new HttpError(404, 'Diese Check-In-Anfrage wurde nicht gefunden. Bitte scanne den aktuellen QR-Code.');
     if (request.status === 'pending' && seconds() - request.createdAt >= requestLifetime) {
       request.status = 'expired';
     }
@@ -102,7 +102,7 @@ export async function createApp({
   }
 
   function requirePending(request) {
-    if (request.status === 'expired') throw new HttpError(410, 'Der QR-Code ist abgelaufen. Bitte scanne den neuen Code am Empfang.');
+    if (request.status === 'expired') throw new HttpError(410, 'Der QR-Code ist abgelaufen. Bitte scanne den neuen Check-In-Code.');
     if (request.status !== 'pending') throw new HttpError(409, 'Dieser QR-Code wird bereits geprüft oder wurde schon verwendet. Bitte scanne einen neuen Code.');
   }
 
@@ -213,7 +213,7 @@ export async function createApp({
 
   app.post('/api/requests', wrap(async (req, res) => {
     requireBody(req.body, ['mode']);
-    if (req.body.mode !== undefined && req.body.mode !== 'kiosk') throw new HttpError(400, 'Unbekannter Check-in-Modus.');
+    if (req.body.mode !== undefined && req.body.mode !== 'kiosk') throw new HttpError(400, 'Unbekannter Check-In-Modus.');
     const request = newRequest(req.body.mode);
     const url = `${publicUrl}/wallet.html#req=${request.id}`;
     const qrDataUrl = await QRCode.toDataURL(url, { width: 640, margin: 4, errorCorrectionLevel: 'M' });
@@ -224,7 +224,7 @@ export async function createApp({
       requireBody(req.body, []);
       const parent = findRequest(req.params.id);
       requirePending(parent);
-      if (parent.mode !== 'kiosk') throw new HttpError(400, 'Nur ein Kiosk-QR kann persönliche Check-in-Anfragen öffnen.');
+      if (parent.mode !== 'kiosk') throw new HttpError(400, 'Nur ein Kiosk-QR kann persönliche Check-In-Anfragen öffnen.');
       res.status(201).json(newRequest());
     } catch (error) {
       next(error);
@@ -240,7 +240,7 @@ export async function createApp({
   app.post('/api/requests/:id/response', wrap(async (req, res) => {
     const request = findRequest(req.params.id);
     requirePending(request);
-    if (request.mode === 'kiosk') throw new HttpError(409, 'Bitte öffne zuerst eine persönliche Check-in-Anfrage über den Kiosk-QR.');
+    if (request.mode === 'kiosk') throw new HttpError(409, 'Bitte öffne zuerst eine persönliche Check-In-Anfrage über den Kiosk-QR.');
     requireBody(req.body, ['presentation']);
     const presentation = text(req.body.presentation, 'Die Presentation', 60000);
     // Reserve before the first await: two phones must not consume the same nonce.
@@ -292,13 +292,13 @@ export async function createApp({
       } else res.json(result);
     } catch (error) {
       request.status = 'error';
-      request.result = { ok: false, steps: [], error: 'Der Check-in konnte nicht gespeichert werden. Bitte wende dich an den Empfang.' };
+      request.result = { ok: false, steps: [], error: 'Der Check-In konnte nicht gespeichert werden. Bitte wende dich an die Moderation.' };
       Object.assign(attempt, {
-        status: 'error', steps: [], error: request.result.error, failedAt: 'Check-in speichern',
+        status: 'error', steps: [], error: request.result.error, failedAt: 'Check-In speichern',
       });
       if (streaming) {
         if (!(error instanceof HttpError) || error.status >= 500) console.error('Serverfehler:', error);
-        const result = { ...request.result, failedAt: 'Check-in speichern',
+        const result = { ...request.result, failedAt: 'Check-In speichern',
           ...(error instanceof HttpError && error.status < 500 ? { error: error.message } : {}) };
         sendFrame({ type: 'result', result });
         res.end();
@@ -371,7 +371,11 @@ export async function createApp({
   });
 
   app.use('/api', (req, res, next) => next(new HttpError(404, 'Dieser API-Endpunkt wurde nicht gefunden.')));
-  for (const page of ['wallet', 'issuer', 'kiosk', 'admin']) {
+  app.get(['/kiosk', '/kiosk.html'], (req, res) => {
+    const query = req.originalUrl.indexOf('?');
+    res.set('Cache-Control', 'no-cache').redirect(`/${query < 0 ? '' : req.originalUrl.slice(query)}`);
+  });
+  for (const page of ['wallet', 'issuer', 'admin']) {
     app.get(`/${page}`, (req, res) => {
       const query = req.originalUrl.indexOf('?');
       res.redirect(`/${page}.html${query < 0 ? '' : req.originalUrl.slice(query)}`);
@@ -404,7 +408,7 @@ export async function createApp({
     const status = error.status || 500;
     if (status >= 500) console.error('Serverfehler:', error);
     const message = status >= 500
-      ? 'Der Server konnte die Anfrage nicht verarbeiten. Bitte versuche es erneut oder wende dich an den Empfang.'
+      ? 'Der Server konnte die Anfrage nicht verarbeiten. Bitte versuche es erneut oder wende dich an die Moderation.'
       : error.type === 'entity.parse.failed'
         ? 'Die Anfrage enthält kein gültiges JSON.'
         : error.type === 'entity.too.large'

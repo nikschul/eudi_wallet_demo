@@ -92,16 +92,15 @@ function timestamp(value) {
 
 function connectionCard(status) {
   return el('section', { class: 'card connection-card stack' },
-    el('h2', {}, 'Organisation angelegt'),
-    el('dl', { class: 'attributes' },
-      el('dt', {}, 'Fester Organisationsname'), el('dd', {}, status.name),
-      el('dt', {}, 'Zentrale Workshop-Adresse'), el('dd', { class: 'break-anywhere' }, config.publicUrl)),
-    el('p', {}, 'Der Organisationsname ist unveränderlich. Ausweise bestätigen diese Organisation und die empfangende Wallet, nicht die Identität einer ausstellenden Person.'),
-    browserAccessNote());
+    el('span', { class: 'eyebrow' }, 'Eure Organisation'),
+    el('h2', { class: 'fixed-organisation' }, status.name));
 }
 
 function browserAccessNote() {
-  return el('p', { class: 'muted' }, 'Der Zugang gehört diesem Laptop-Browser und bleibt durch ein geschütztes HttpOnly-Cookie erhalten. Website-Daten nicht löschen; keinen privaten Browsermodus verwenden. Bei verlorenem Zugang kann nur die Moderation einen privaten Wiederherstellungslink erzeugen. Die persönliche Wallet bleibt auf dem Smartphone.');
+  return el('details', {},
+    el('summary', {}, 'Hinweise zum Browser-Zugang'),
+    el('p', {}, 'Diesen Laptop-Browser weiterverwenden. Website-Daten nicht löschen und keinen privaten Browsermodus nutzen. Bei verlorenem Zugang hilft die Moderation mit einem privaten Wiederherstellungslink.'),
+    el('p', {}, 'Ein geschütztes HttpOnly-Cookie erhält den Organisationszugang. Die persönliche Wallet bleibt auf dem Smartphone.'));
 }
 
 function progress(current) {
@@ -129,7 +128,7 @@ function onboarding() {
     el('section', { class: 'card stack onboarding-panel' },
       el('span', { class: 'eyebrow' }, 'Schritt 1 / Organisation'),
       el('h2', {}, 'Wie heißt eure Organisation?'),
-      el('p', {}, 'Jeder Laptop-Browser kann eine eigene Organisation anlegen. Du brauchst nur den Organisationsnamen, keinen persönlichen Namen. Die Moderation gibt eure Organisation anschließend frei.'),
+      el('p', {}, 'Nur einen Organisationsnamen eingeben. Danach gibt die Moderation eure Organisation frei.'),
       formAction(el('form', { class: 'stack' },
         field('name', 'Organisationsname *'),
         el('p', { class: 'muted' }, 'Bitte sorgfältig wählen: Der Name ist danach nicht mehr änderbar und steht auf allen Ausweisen dieser Organisation. Nur erfundene Daten verwenden.'),
@@ -150,10 +149,10 @@ async function dashboard(status) {
   root.hidden = false;
   const generation = dashboardGeneration;
   const isCurrent = () => generation === dashboardGeneration && !root.hidden;
-  const trustPanel = el('section', { class: 'card stack' });
-  const offerPanel = el('section', { class: 'card stack' });
+  const trustPanel = connectionCard(status);
+  const offerPanel = el('section', { class: 'card stack', hidden: true });
   const transferPanel = el('section', { class: 'card stack transfer-panel', hidden: true });
-  const credentialsPanel = el('section', { class: 'card stack credentials-panel' });
+  const credentialsPanel = el('details', { class: 'card credentials-panel' });
   let canOffer;
   let offerVersion = 0;
   let trustPoll;
@@ -162,25 +161,19 @@ async function dashboard(status) {
   let transfer;
 
   const steps = progress(status.state === 'approved' ? 3 : 2);
+  const dashboardGrid = el('div', { class: 'stack' }, trustPanel, offerPanel);
   root.replaceChildren(
-    steps,
-    el('div', { class: 'dashboard-grid' },
-      el('div', { class: 'stack' }, connectionCard(status), trustPanel),
-      offerPanel),
+    steps, dashboardGrid,
     transferPanel, credentialsPanel);
 
-  const offerHeading = el('h2');
-  const offerGate = el('p', { class: 'message warning' });
+  const offerHeading = el('h2', {}, 'Für wen wird der Ausweis ausgestellt?');
   const offerFields = el('fieldset', { class: 'stack offer-fields', disabled: true },
     el('legend', { class: 'visually-hidden' }, 'Angaben zum Mitarbeiterausweis'),
-      el('div', { class: 'fixed-organisation' },
-        el('span', {}, 'Organisation (fest)'), el('strong', {}, status.name)),
       el('div', { class: 'form-grid' },
         field('given_name', 'Vorname *'), field('family_name', 'Nachname *')),
       el('label', { class: 'field' }, 'Rolle *',
         el('select', { name: 'role', required: true }, roles.map((role) => el('option', { value: role }, role)))),
-      el('p', { class: 'muted' }, 'Alle Felder höchstens 120 Zeichen. Der signierte Ausweis gilt einen Tag; das QR-Angebot zehn Minuten.'),
-      el('p', {}, 'Nach Wallet-Schlüsselbeweis und richtigem Ausgabecode signiert der Server automatisch. Am Laptop ist kein weiterer Signatur-Schritt nötig.'),
+      el('p', { class: 'muted' }, 'Nur erfundene Personendaten verwenden. Der Ausweis gilt einen Tag.'),
       el('button', { type: 'submit' }, 'QR-Angebot erstellen'));
   const offerForm = formAction(el('form', { class: 'stack' }, offerFields),
     async (data) => {
@@ -190,22 +183,27 @@ async function dashboard(status) {
       const offer = await issuerApi('/offers', { body: { claims } });
       if (!isCurrent()) return;
       activeOffer = offer;
-      offerPanel.hidden = true;
+      updateOfferGate(canOffer);
       transferPanel.hidden = false;
       renderTransfer(offer);
       if (pageActive) offerPoll.start();
       transferPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
   offerPanel.append(el('span', { class: 'eyebrow' }, 'Schritt 3 / Mitarbeiterausweis'),
-    offerHeading, offerGate, offerForm);
+    offerHeading, el('p', {}, 'Anschließend übernimmt die Person den Ausweis mit ihrem Smartphone.'), offerForm);
 
   function updateOfferGate(allowed) {
-    if (canOffer === allowed) return;
     canOffer = allowed;
     offerFields.disabled = !allowed;
-    offerHeading.textContent = 'Für wen wird der Ausweis ausgestellt?';
-    offerGate.hidden = allowed;
-    offerGate.textContent = 'Neue Angebote sind erst nach Freigabe der Organisation möglich. Eingaben und ein offenes QR-Angebot bleiben bei Statusänderungen erhalten. Der Server prüft die Freigabe auch vor der automatischen Signatur.';
+    offerPanel.hidden = !allowed || Boolean(activeOffer);
+    dashboardGrid.className = offerPanel.hidden ? 'stack' : 'dashboard-grid';
+    const currentStep = allowed || activeOffer ? 3 : 2;
+    for (let index = 0; index < steps.children.length; index += 1) {
+      const step = steps.children[index];
+      if (index + 1 === currentStep) step.setAttribute('aria-current', 'step');
+      else step.removeAttribute('aria-current');
+      step.className = index + 1 < currentStep ? 'completed' : '';
+    }
   }
 
   async function refreshTrust(valid) {
@@ -225,15 +223,8 @@ async function dashboard(status) {
       updateOfferGate(approved);
       setText(trustStatus, approved ? 'Freigegeben · Du kannst Mitarbeiterausweise ausstellen.'
         : status.state === 'suspended' ? 'Gesperrt · Neue Ausgaben sind ausgesetzt. Bereits ausgestellte Ausweise kannst du weiterhin verwalten und widerrufen.'
-          : 'Wartet auf Freigabe · Die Moderation muss eure Organisation einmalig freigeben. Du musst nichts registrieren oder übertragen.');
+          : 'Wartet auf Freigabe · Die Moderation gibt eure Organisation frei. Diese Seite aktualisiert sich automatisch.');
       trustStatus.className = `message ${approved ? 'notice' : 'warning'}`;
-      const currentStep = approved ? 3 : 2;
-      for (let index = 0; index < steps.children.length; index += 1) {
-        const step = steps.children[index];
-        if (index + 1 === currentStep) step.setAttribute('aria-current', 'step');
-        else step.removeAttribute('aria-current');
-        step.className = index + 1 < currentStep ? 'completed' : '';
-      }
       setText(trustChecked, `Zuletzt geprüft: ${new Date().toLocaleString('de-DE')}. Automatische Prüfung etwa alle 5 Sekunden.`);
       setText(trustDetails.querySelector('pre'), JSON.stringify({
         id: status.id, did: status.did, fingerprint: status.fingerprint, state: status.state,
@@ -241,7 +232,7 @@ async function dashboard(status) {
     } catch (error) {
       if (!valid()) return;
       updateOfferGate(false);
-      trustStatus.textContent = `Der aktuelle Organisationsstatus konnte nicht geprüft werden: ${error.message}`;
+      trustStatus.textContent = `Der aktuelle Organisationsstatus konnte nicht geprüft werden: ${error.message} Neue Ausgaben bleiben bis zur Bestätigung pausiert.`;
       trustStatus.className = 'message warning';
     }
   }
@@ -251,10 +242,13 @@ async function dashboard(status) {
   const trustDetails = raw({}, 'Technische Organisationsdaten anzeigen');
   const refresh = action(el('button', { type: 'button', class: 'secondary' }, 'Organisationsstatus aktualisieren'),
     () => trustPoll.refresh());
-  trustPanel.replaceChildren(el('span', { class: 'eyebrow' }, 'Schritt 2 / Freigabe'),
-    el('h2', {}, 'Freigabe durch die Moderation'), trustStatus, trustChecked, refresh,
-    el('p', {}, 'Die Moderation sieht eure Organisation zentral und kann sie freigeben oder sperren. Ein DID-Fingerabdruck muss dafür nicht übergeben werden. Die Freigabe gilt der Organisation, nicht einzelnen Ausweisen. Eine Sperre ist kein Widerruf einzelner Ausweise.'),
-    trustDetails);
+  trustPanel.append(trustStatus, refresh,
+    el('details', {},
+      el('summary', {}, 'Organisation & technische Details'),
+      el('p', {}, 'Der Organisationsname ist unveränderlich und steht auf allen Ausweisen. Die Freigabe gilt der Organisation. Eine Sperre widerruft keine einzelnen Ausweise.'),
+      el('dl', { class: 'attributes' },
+        el('dt', {}, 'Workshop-Adresse'), el('dd', { class: 'break-anywhere' }, config.publicUrl)),
+      trustChecked, browserAccessNote(), trustDetails));
   updateOfferGate(false);
 
   let credentialRecords = [];
@@ -278,15 +272,16 @@ async function dashboard(status) {
   const pageStatus = el('span');
   const pagination = el('nav', { class: 'actions credential-pagination', 'aria-label': 'Ausweisliste durchblättern', hidden: true },
     previous, pageStatus, nextPage);
-  credentialsPanel.append(el('span', { class: 'eyebrow' }, 'Verwaltung / Auch bei gesperrter Organisation'),
-    el('h2', {}, 'Ausweise verwalten & endgültig widerrufen'),
-    el('p', {}, 'Diese geschützte Liste eurer Organisation bleibt zentral auch nach einem Neustart erhalten. Ein Widerruf ist dauerhaft und kann nicht rückgängig gemacht werden. Für einen Ersatz muss ein neuer Ausweis ausgestellt werden.'),
-    el('p', {}, 'Löschen in der Wallet entfernt nur die lokale Kopie und widerruft keinen Ausweis. Vertrauen in die Ausweisstelle und Widerruf eines einzelnen Ausweises sind getrennte Entscheidungen.'),
-    el('div', { class: 'credential-controls' },
-      el('label', { class: 'field' }, 'Ausweise suchen', search),
-      el('label', { class: 'field' }, 'Nach Status filtern', filter)),
-    action(el('button', { type: 'button', class: 'secondary' }, 'Ausweisliste aktualisieren'), () => credentialsPoll.refresh()),
-    listError, listMutationStatus, listStatus, list, pagination, listChecked);
+  const credentialCount = el('span', { class: 'muted' }, ' · Wird geladen …');
+  credentialsPanel.append(el('summary', {}, 'Ausweise verwalten & widerrufen', credentialCount),
+    el('div', { class: 'stack' },
+      el('p', {}, 'Auch bei gesperrter Organisation verfügbar. Ein Widerruf ist endgültig; Löschen in der Wallet ist kein Widerruf.'),
+      el('div', { class: 'credential-controls' },
+        el('label', { class: 'field' }, 'Ausweise suchen', search),
+        el('label', { class: 'field' }, 'Nach Status filtern', filter)),
+      action(el('button', { type: 'button', class: 'secondary' }, 'Ausweisliste aktualisieren'), () => credentialsPoll.refresh()),
+      listError, listMutationStatus, listStatus, list, pagination,
+      el('details', {}, el('summary', {}, 'Aktualisierungsdetails'), listChecked)));
 
   function credentialState(record) {
     if (record.revokedAt) return 'revoked';
@@ -440,6 +435,7 @@ async function dashboard(status) {
       }
       credentialRecords = records.sort((a, b) => b.issuedAt.localeCompare(a.issuedAt) || a.id.localeCompare(b.id));
       credentialsLoaded = true;
+      setText(credentialCount, ` · ${records.length}`);
       listError.hidden = true;
       for (const record of records) credentialEntries.get(record.id)?.update(record);
       const ids = new Set(records.map((record) => record.id));
@@ -448,6 +444,7 @@ async function dashboard(status) {
       setText(listChecked, `Liste zuletzt geladen: ${new Date().toLocaleString('de-DE')}. Automatische Aktualisierung etwa alle 5 Sekunden.`);
     } catch (error) {
       if (!valid()) return;
+      setText(credentialCount, credentialsLoaded ? ' · Liste nicht aktuell' : ' · Laden fehlgeschlagen');
       listError.hidden = false;
       listError.textContent = `Ausweisliste konnte nicht ${credentialsLoaded ? 'aktualisiert' : 'geladen'} werden: ${error.message}`;
       setText(listStatus, credentialsLoaded ? 'Achtung: Angezeigte Daten sind möglicherweise nicht aktuell.'
@@ -473,15 +470,15 @@ async function dashboard(status) {
         transfer = null;
         transferPanel.hidden = true;
         transferPanel.replaceChildren();
-        offerPanel.hidden = false;
+        updateOfferGate(false);
         offerForm.reset();
-        offerForm.querySelector('input').focus();
         await trustPoll.refresh();
+        if (isCurrent() && !offerPanel.hidden) offerForm.querySelector('input').focus();
       });
       const qr = el('div', { class: 'qr-column' },
         el('img', { class: 'offer-qr', src: offer.qrDataUrl, alt: 'Angebots-QR für die Smartphone-Wallet', width: 360, height: 360 }),
         codePanel, codeStatus,
-        el('p', {}, 'In der Smartphone-Wallet „QR-Code scannen“ verwenden – auch direkt in der installierten Wallet (PWA). Alternativ mit der Smartphone-Kamera scannen oder den Angebotslink auf dem Handy öffnen. Beim ersten Mal die Wallet dort einmalig einrichten. Eine vorhandene Wallet im selben Browser weiterverwenden.'),
+        el('p', {}, 'Scanne den QR-Code mit deinem Smartphone oder in der Wallet. Gib dort den Ausgabecode ein.'),
         el('a', { class: 'break-anywhere', href: offer.url, target: '_blank', rel: 'noopener noreferrer' }, 'Angebotslink für das Smartphone'),
         el('p', { class: 'muted' }, `Angebot gültig bis ${new Date(offer.expiresAt).toLocaleTimeString('de-DE')}. QR und Link nicht öffentlich teilen.`));
       const details = el('div', { class: 'stack' },
@@ -505,16 +502,16 @@ async function dashboard(status) {
     transfer.codeStatus.hidden = offer.status === 'offered';
     setText(transfer.codeStatus, ['cancelled', 'expired'].includes(offer.status)
       ? 'Angebot beendet · Der Ausgabecode ist nicht mehr verwendbar.'
-      : 'Ausgabecode und Wallet-Schlüsselbeweis geprüft. Keine erneute Codeeingabe nötig.');
+      : 'Wallet verbunden · Keine erneute Codeeingabe nötig.');
     const states = {
       offered: ['Angeboten · Wartet auf Smartphone und Ausgabecode.',
-        'Auf dem Handy Angebot öffnen, Ausgabecode eingeben und anschließend den Ausweis in der Wallet speichern. Nach richtigem Code und Schlüsselbeweis wird automatisch signiert – ohne weiteren Klick am Laptop. Nach fünf falschen Codeeingaben ist ein neues Angebot nötig.'],
-      bound: ['Wallet geprüft · Automatische Signatur läuft.',
-        'Code und Schlüsselbeweis sind geprüft. Auf dem Smartphone fortfahren; am Laptop ist keine Freigabe nötig.'],
-      issued: ['Automatisch signiert · Wartet auf Speichern in der Wallet.',
-        'Jetzt auf dem Smartphone den Ausweis in der Wallet speichern. Erst die Empfangsbestätigung schließt diese Übergabe ab. Bei Verbindungsproblemen dasselbe Angebot mit derselben Wallet erneut öffnen.'],
+        'Auf dem Smartphone das Angebot öffnen, den Ausgabecode eingeben und den Ausweis speichern. Am Laptop ist nichts weiter nötig.'],
+      bound: ['Wallet verbunden · Ausweis wird erstellt.',
+        'Auf dem Smartphone fortfahren. Am Laptop ist nichts weiter nötig.'],
+      issued: ['Ausweis bereit · Wartet auf Speichern in der Wallet.',
+        'Jetzt auf dem Smartphone den Ausweis speichern. Bei Verbindungsproblemen dasselbe Angebot mit derselben Wallet erneut öffnen.'],
       accepted: ['Gespeichert · Die Wallet hat den Empfang bestätigt.',
-        'Der Ausweis ist an die Organisation und den Smartphone-Schlüssel gebunden. Für die nächste Person ausdrücklich „Weiteren Mitarbeiterausweis vorbereiten“ wählen.'],
+        'Der Ausweis ist bereit für den Check-In. Für die nächste Person „Weiteren Mitarbeiterausweis vorbereiten“ wählen.'],
       cancelled: ['Angebot abgebrochen.', offer.cancellationReason || 'Dieses Angebot kann nicht mehr verwendet werden. Bitte bewusst ein neues Angebot vorbereiten.'],
       expired: ['Angebot abgelaufen oder nicht mehr verfügbar.', offer.cancellationReason || 'Dieses Angebot kann nicht mehr verwendet werden. Bitte bewusst ein neues Angebot vorbereiten.'],
     };

@@ -17,10 +17,10 @@ const { app, adminToken } = await createApp({
   dataDirectory: process.env.DATA_DIR || fileURLToPath(new URL('../hosted-data/', import.meta.url)),
 });
 const server = app.listen(port, '0.0.0.0', () => {
-  console.log(`EUDI-Demo: ${publicUrl}`);
+  console.log(`Wallet & Check-In: ${publicUrl}`);
   console.log('Rolle: Zentral gehosteter Workshop');
   console.log(`Organisation anlegen: ${publicUrl}/issuer.html`);
-  console.log(`Kiosk: ${publicUrl}/kiosk.html`);
+  console.log(`Check-In: ${publicUrl}/`);
   const managementPath = '/admin.html';
   const unlockLink = (base) => {
     const url = new URL(managementPath, base);

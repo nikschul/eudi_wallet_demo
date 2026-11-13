@@ -5,7 +5,7 @@ export const verificationChecks = [
   'Gültigkeitsdauer prüfen',
   'Geteilte Angaben mit den signierten Hashes abgleichen',
   'Besitz des Wallet-Schlüssels prüfen',
-  'Einmalige Anfrage und richtigen Empfang prüfen',
+  'Einmalige Anfrage und richtigen Check-In prüfen',
   'Aktuelle signierte Widerrufsliste prüfen',
 ];
 
@@ -53,7 +53,7 @@ export async function readVerificationStream(response, onProgress) {
     }
     buffer += decoder.decode();
     consume(buffer);
-    if (!result) throw new Error('Die Verbindung endete ohne bestätigtes Prüfergebnis. Prüfe die Anzeige am Empfang.');
+    if (!result) throw new Error('Die Verbindung endete ohne bestätigtes Prüfergebnis. Prüfe die Check-In-Anzeige.');
     return result;
   } finally {
     await reader.cancel();

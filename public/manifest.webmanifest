@@ -1,8 +1,8 @@
 {
   "id": "/",
-  "name": "EUDI Wallet Demo",
-  "short_name": "EUDI Wallet",
-  "description": "Dein Mitarbeiterausweis in deiner Wallet: im Workshop erhalten und am Empfang gezielt vorzeigen.",
+  "name": "Wallet & Check-In",
+  "short_name": "Wallet",
+  "description": "Mitarbeiterausweise erhalten, in deiner Wallet verwalten und damit einchecken.",
   "lang": "de",
   "start_url": "/wallet.html",
   "scope": "/",

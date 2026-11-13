@@ -1,7 +1,7 @@
-const CACHE = 'eudi-shell-v9';
+const CACHE = 'eudi-shell-v11';
 const SHELL = [
-  '/', '/index.html', '/wallet.html', '/issuer.html', '/kiosk.html', '/admin.html',
-  '/styles.css', '/index.js', '/wallet.js', '/issuer.js', '/issuer.css', '/kiosk.js', '/admin.js',
+  '/', '/index.html', '/wallet.html', '/issuer.html', '/admin.html',
+  '/styles.css', '/wallet.js', '/issuer.js', '/issuer.css', '/kiosk.js', '/admin.js',
   '/wallet-scanner.js', '/wallet-scanner.css',
   '/wallet-presentation.css', '/kiosk.css', '/lib/verification.js',
   '/vendor/qr-scanner/qr-scanner.min.js', '/vendor/qr-scanner/qr-scanner-worker.min.js',

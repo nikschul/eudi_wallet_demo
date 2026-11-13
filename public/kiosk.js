@@ -72,7 +72,7 @@ function attemptRow(attempt) {
   const detail = processing
     ? (attempt.step ? `Zuletzt geprüft: ${attempt.step} · Prüfung läuft weiter.` : 'Signatur, Vertrauen und Wallet-Bindung werden geprüft.')
     : done ? 'Nachweis akzeptiert · erfolgreicher Besuch gespeichert.'
-      : `${attempt.failedAt ? `${attempt.failedAt}: ` : ''}${attempt.error || 'Prüfung fehlgeschlagen.'} Am Empfang klären, danach erneut scannen.`;
+      : `${attempt.failedAt ? `${attempt.failedAt}: ` : ''}${attempt.error || 'Prüfung fehlgeschlagen.'} Beim Check-In klären, danach erneut scannen.`;
   return el('li', { class: `attempt-row ${attempt.status}` },
     el('div', { class: 'attempt-heading' },
       el('strong', {}, `${attempt.name}${attempt.identityVerified === true ? '' : ' (ungeprüft)'}`),
@@ -83,7 +83,7 @@ function attemptRow(attempt) {
 
 const pagers = {
   issuers: pager('progress-list', 'issuer-pages', 6, issuerRow, 'Noch keine Organisation registriert.'),
-  attempts: pager('attempts', 'attempt-pages', 3, attemptRow, 'Noch keine Prüfungen seit Serverstart. Jetzt den Check-in-QR scannen.'),
+  attempts: pager('attempts', 'attempt-pages', 3, attemptRow, 'Noch keine Prüfungen seit Serverstart. Jetzt den Check-In-QR scannen.'),
   attendees: pager('attendees', 'attendee-pages', 3, (person) =>
     el('li', {}, el('strong', {}, person.name), el('time', { datetime: person.time }, formatTime(person.time))),
   'Noch niemand eingecheckt.'),
@@ -119,7 +119,8 @@ function applyConfig(value) {
   document.getElementById('issuer-setup-qr').src = value.issuerSetupQrDataUrl;
   document.getElementById('issuer-setup-qr').hidden = false;
   document.getElementById('issuer-setup-link').href = value.issuerSetupUrl;
-  document.getElementById('issuer-setup-link').textContent = value.issuerSetupUrl;
+  document.getElementById('issuer-setup-link').textContent = 'Organisation anlegen ↗';
+  document.getElementById('wallet-start').href = new URL('/wallet.html', value.publicUrl).href;
   config = value;
 }
 
@@ -184,7 +185,7 @@ async function refreshSection(work, errorId) {
       document.getElementById('checkin-qr').hidden = true;
       document.getElementById('checkin-link').hidden = true;
       const loading = document.getElementById('qr-loading');
-      loading.textContent = 'Check-in-QR nicht verfügbar · Wiederverbindung läuft …';
+      loading.textContent = 'Check-In-QR nicht verfügbar · Wiederverbindung läuft …';
       loading.hidden = false;
     }
   }

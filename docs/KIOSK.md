@@ -1,4 +1,4 @@
-# Kiosk / Workshop-Zentrale
+# Check-In / Workshop-Zentrale
 
 [Projekt und Host-Installation](../README.md) · [Organisationseinrichtung](ISSUER.md) ·
 [Hands-on](PARTICIPANTS.md) · [Tunnel im Terminal](TUNNELS.md)
@@ -46,14 +46,18 @@ starten; Organisationen neu auf der Zentrale registrieren.
 
 ## 2. Gemeinsam moderieren
 
-- <http://localhost:3000/kiosk.html> auf TV/Beamer öffnen.
+- <http://localhost:3000/> auf TV/Beamer öffnen. Die Startseite ist der
+  **Check-In**; bisherige Links auf `/kiosk.html` leiten dorthin weiter.
   Der große **Check-in-QR** bleibt der primäre QR. Darunter zeigt der Kiosk einen
   kleineren, klar beschrifteten **öffentlichen Organisations-QR** samt sichtbarer
-  `/issuer.html`-Adresse. Diese Adresse am Laptop öffnen; sie ist
+  Link **„Organisation anlegen“**, der am Laptop einen neuen Tab öffnet.
+  Der Check-In bleibt im ursprünglichen Tab sichtbar. Der Link führt zu
+  `/issuer.html`; er ist
   weder Wallet-Startseite noch privater Verwaltungs- oder Wiederherstellungslink.
   Teilnehmende registrieren ihre Organisation und warten auf deine Freigabe.
   Erst der spätere Ausweisangebots-QR öffnet die Wallet am Smartphone: einmalige
-  Wallet-Einrichtung, Code eingeben, danach automatischer Ausweisempfang. Mit
+  automatische Wallet-Vorbereitung ohne Einrichtungsdialog, Code eingeben,
+  danach automatischer Ausweisempfang. Mit
   gespeichertem Ausweis wird der große Check-in-QR gescannt.
 
   Das Dashboard zeigt genau zwei Gesamtkennzahlen: **registrierte Organisationen**

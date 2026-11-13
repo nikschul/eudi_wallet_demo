@@ -226,7 +226,7 @@ export function resetWalletNavigation() {
 
 export function requireCrypto() {
   if (!globalThis.isSecureContext || !globalThis.crypto?.subtle) {
-    throw new Error('Deine Wallet braucht eine sichere HTTPS-Adresse. Eine lokale IP-Adresse mit http:// funktioniert auf Smartphones nicht. Bitte wende dich an den Empfang.');
+    throw new Error('Deine Wallet braucht eine sichere HTTPS-Adresse. Eine lokale IP-Adresse mit http:// funktioniert auf Smartphones nicht. Bitte wende dich an die Moderation.');
   }
 }
 
@@ -258,7 +258,7 @@ export async function setupPage() {
 
 function setupBrowserFeatures() {
   for (const node of document.querySelectorAll('[data-explain]')) node.replaceWith(explain(node.dataset.explain));
-  window.addEventListener('offline', () => showError(new Error('Du bist offline. Bereits gespeicherte Nachweise sind lesbar; für Ausstellung und Check-in brauchst du eine Verbindung.')));
+  window.addEventListener('offline', () => showError(new Error('Du bist offline. Bereits gespeicherte Nachweise sind lesbar; für Ausstellung und Check-In brauchst du eine Verbindung.')));
   window.addEventListener('online', () => { clearError(); notify('Du bist wieder online. Bitte wiederhole die letzte Aktion.'); });
   const install = document.getElementById('install');
   if (install) {

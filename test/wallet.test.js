@@ -470,7 +470,7 @@ test('QR consent requires fresh status, status recovery never opens consent, and
   await until(() => state.app.textContent.includes('nicht erreichbar'));
   request.open();
   assert.equal(state.location.hash, '');
-  await until(() => state.app.textContent.includes('Check-in derzeit nicht möglich'));
+  await until(() => state.app.textContent.includes('Check-In derzeit nicht möglich'));
   assert.doesNotMatch(state.app.textContent, /Welche Angaben möchtest du teilen/);
   state.statusResponse = () => signedList(state.issuer);
   await settle();
@@ -485,7 +485,7 @@ test('QR consent requires fresh status, status recovery never opens consent, and
   state.statusResponse = () => signedList(state.issuer, [0]);
   await submit(state.app);
   assert.match(state.app.textContent, /Widerrufen/);
-  assert.match(state.app.textContent, /Check-in nicht möglich/);
+  assert.match(state.app.textContent, /Check-In nicht möglich/);
   assert.equal(request.presentations.length, 0);
   state.statusResponse = () => { throw new Error('offline'); };
   await submit(state.app);
@@ -535,7 +535,7 @@ test('Multiple valid credentials require an explicit choice and present only the
   assert.equal(other.checked, false);
   await state.poll();
   assert.equal(radio.checked, true);
-  assert.match(state.app.textContent, /Empfang erhält/);
+  assert.match(state.app.textContent, /Beim Check-In geteilt/);
   assert.match(state.app.textContent, /Nicht als Attribut geteilt/);
   await submit(state.app);
   assert.equal(request.presentations.length, 1);
@@ -859,7 +859,7 @@ test('Hosted issuance rejects incorrect codes, signs automatically and waits onl
   input.value = '123456';
   const connecting = submit(state.app);
   await until(() => state.app.textContent.includes('Dein Ausweis wird automatisch signiert'));
-  assert.match(state.app.textContent, /Bleibe auf diesem Handy|Am Notebook ist keine weitere Aktion/);
+  assert.match(state.app.textContent, /bleibe auf dieser Seite/);
   assert.doesNotMatch(state.app.textContent, /jetzt signieren|auf deinem Rechner weiter/);
   release();
   await connecting;
@@ -875,24 +875,131 @@ test('Hosted issuance rejects incorrect codes, signs automatically and waits onl
   assert.equal(state.location.hash, '');
 });
 
-test('Pre-wallet scanner and deliberate QR paste preserve an offer through one-time onboarding and then start automatic issuance', async (t) => {
+test('A direct offer scan creates the first wallet automatically and later scans reuse its keys', async (t) => {
+  const state = await fixture(t);
+  state.storage.delete('wallet');
+  const offer = offerFixture(state);
+  state.location.hash = offer.fragment;
+  await state.start();
+  await until(() => button(state.app, 'Ausgabecode prüfen & Ausweis empfangen'));
+  const keys = state.read();
+  assert.notEqual(keys.did, state.wallet.did);
+  assert.equal(state.location.hash, offer.fragment);
+  assert.doesNotMatch(state.app.textContent, /Wallet auf diesem Handy erstellen|Wallet schon erstellt|Wallet einmalig.*einrichten/);
+  state.browserEvents.get('pageshow')({ persisted: true });
+  await until(() => button(state.app, 'Ausgabecode prüfen & Ausweis empfangen'));
+  assert.deepEqual(state.read(), keys);
+  find(state.app, (node) => node.attributes.name === 'transactionCode').value = '123456';
+  await submit(state.app);
+  await button(state.app, 'Ausweis in Wallet speichern').listeners.get('click')();
+  assert.equal(state.read().credentials.length, 1);
+  const request = requestFixture(state);
+  request.open();
+  await until(() => state.app.textContent.includes('Welche Angaben möchtest du teilen'));
+  assert.deepEqual(state.read().privateJwk, keys.privateJwk);
+  assert.equal(state.read().did, keys.did);
+  assert.doesNotMatch(state.app.textContent, /Wallet auf diesem Handy erstellen|Wallet schon erstellt/);
+});
+
+test('Concurrent navigation during first key generation creates one wallet and retains the latest offer', async (t) => {
+  const state = await fixture(t);
+  state.storage.delete('wallet');
+  const offer = offerFixture(state);
+  const generate = crypto.subtle.generateKey.bind(crypto.subtle);
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  t.after(() => release());
+  let generations = 0;
+  let writes = 0;
+  t.mock.method(crypto.subtle, 'generateKey', async (...args) => {
+    generations++;
+    await gate;
+    return generate(...args);
+  });
+  t.mock.method(localStorage, 'setItem', (key, value) => { writes++; state.storage.set(key, value); });
+  await state.start();
+  await until(() => generations === 1);
+  state.location.hash = offer.fragment;
+  state.browserEvents.get('hashchange')();
+  state.browserEvents.get('pageshow')({ persisted: true });
+  release();
+  await until(() => button(state.app, 'Ausgabecode prüfen & Ausweis empfangen'));
+  assert.equal(generations, 1);
+  assert.equal(writes, 1);
+  assert.equal(state.location.hash, offer.fragment);
+  assert.equal(offer.calls.claim, 0);
+});
+
+test('First-time creation rechecks browser storage after acquiring the cross-tab lock', async (t) => {
+  const state = await fixture(t);
+  state.storage.delete('wallet');
+  let locks = 0;
+  navigator.locks = {
+    async request(name, work) {
+      assert.equal(name, 'eudi-wallet-initialization');
+      locks++;
+      state.storage.set('wallet', JSON.stringify(state.wallet));
+      return work();
+    },
+  };
+  t.mock.method(crypto.subtle, 'generateKey', () => assert.fail('Must reuse the wallet created by another tab'));
+  await state.start();
+  await until(() => state.app.textContent.includes('Meine Ausweise'));
+  assert.equal(locks, 1);
+  assert.deepEqual(state.read(), state.wallet);
+});
+
+test('Corrupt stored wallet data is reported instead of silently replacing its keys', async (t) => {
+  const state = await fixture(t);
+  state.storage.set('wallet', '{broken');
+  t.mock.method(crypto.subtle, 'generateKey', () => assert.fail('Must not replace unreadable wallet data'));
+  await state.start();
+  await until(() => state.error.textContent.includes('Browser-Daten konnten nicht gelesen werden'));
+  assert.equal(state.storage.get('wallet'), '{broken');
+  assert.doesNotMatch(state.app.textContent, /Wallet auf diesem Handy erstellen|Wallet schon erstellt/);
+});
+
+test('Failed automatic storage is explicit and retry saves the same generated key instead of inventing success', async (t) => {
+  const state = await fixture(t);
+  state.storage.delete('wallet');
+  const generate = crypto.subtle.generateKey.bind(crypto.subtle);
+  let generations = 0;
+  let allowWrites = false;
+  t.mock.method(crypto.subtle, 'generateKey', (...args) => { generations++; return generate(...args); });
+  t.mock.method(localStorage, 'setItem', (key, value) => {
+    if (!allowWrites) throw new DOMException('storage full', 'QuotaExceededError');
+    state.storage.set(key, value);
+  });
+  await state.start();
+  await until(() => state.error.textContent.includes('Browser konnte die Daten nicht speichern'));
+  assert.equal(state.storage.has('wallet'), false);
+  assert.doesNotMatch(state.app.textContent, /Meine Ausweise/);
+  allowWrites = true;
+  await button(state.app, 'Erneut versuchen').listeners.get('click')();
+  await until(() => state.app.textContent.includes('Meine Ausweise'));
+  assert.equal(generations, 1);
+  assert.equal(state.read().credentials.length, 0);
+});
+
+test('A fresh wallet is prepared automatically and pasted offers never need a setup confirmation', async (t) => {
   const state = await fixture(t);
   state.storage.delete('wallet');
   const offer = offerFixture(state);
   await state.start();
-  await until(() => button(state.app, 'Wallet auf diesem Handy erstellen'));
+  await until(() => state.app.textContent.includes('Meine Ausweise'));
   assert.ok(button(state.app, 'QR-Code scannen'));
   assert.equal(state.requests.length, 0);
+  const keys = state.read();
+  assert.notEqual(keys.did, state.wallet.did);
+  assert.doesNotMatch(state.app.textContent, /Wallet auf diesem Handy erstellen|Wallet schon erstellt|Wallet einmalig.*einrichten/);
   const link = find(state.app, (node) => node.attributes.name === 'link');
   link.value = `${issuerUrl}/wallet.html${offer.fragment}`;
   await submit(state.app);
-  assert.match(state.app.textContent, /Dein Ausstellungsangebot ist geöffnet/);
+  await until(() => button(state.app, 'Ausgabecode prüfen & Ausweis empfangen'));
   assert.equal(state.location.hash, offer.fragment);
-  assert.equal(state.storage.has('wallet'), false);
   assert.equal(offer.calls.claim, 0);
-  await button(state.app, 'Wallet auf diesem Handy erstellen').listeners.get('click')();
-  assert.notEqual(state.read().did, state.wallet.did);
-  assert.equal(state.location.hash, offer.fragment);
+  assert.equal(state.read().did, keys.did);
+  assert.deepEqual(state.read().privateJwk, keys.privateJwk);
   assert.equal(state.read().credentials.length, 0);
   assert.match(state.app.textContent, /Ausgabecode prüfen & Ausweis empfangen/);
   find(state.app, (node) => node.attributes.name === 'transactionCode').value = '123456';
@@ -900,6 +1007,7 @@ test('Pre-wallet scanner and deliberate QR paste preserve an offer through one-t
   assert.match(state.app.textContent, /Dein Mitarbeiterausweis ist bereit/);
   await button(state.app, 'Ausweis in Wallet speichern').listeners.get('click')();
   assert.equal(state.read().credentials.length, 1);
+  assert.equal(state.read().did, keys.did);
   assert.equal(offer.calls.ack, 1);
   assert.match(state.app.textContent, /Meine Ausweise/);
   assert.ok(button(state.app, 'QR-Code scannen'));
@@ -940,11 +1048,10 @@ test('Inventory camera request is explicit; cancel/pagehide/hidden/navigating du
   assert.deepEqual(state.read().privateJwk, state.wallet.privateJwk);
 });
 
-test('Pre-wallet camera denial shows a retry/cancel path without creating keys or losing an opened offer', async (t) => {
+test('Fresh-wallet camera denial allows retry/cancel without rotating automatically created keys', async (t) => {
   const state = await fixture(t);
   state.storage.delete('wallet');
   const offer = offerFixture(state);
-  state.location.hash = offer.fragment;
   let acquisitions = 0;
   navigator.mediaDevices = {
     getUserMedia: async () => {
@@ -954,6 +1061,7 @@ test('Pre-wallet camera denial shows a retry/cancel path without creating keys o
   };
   await state.start();
   await until(() => button(state.app, 'QR-Code scannen'));
+  const keys = state.read();
   assert.equal(acquisitions, 0);
   await button(state.app, 'QR-Code scannen').listeners.get('click')();
   assert.match(state.app.textContent, /Kamerazugriff nicht erlaubt/);
@@ -964,9 +1072,14 @@ test('Pre-wallet camera denial shows a retry/cancel path without creating keys o
   assert.equal(acquisitions, 2);
   assert.match(state.app.textContent, /Kamerazugriff nicht erlaubt/);
   await button(state.app, 'Scannen abbrechen').listeners.get('click')();
-  assert.match(state.app.textContent, /Dein Ausstellungsangebot ist geöffnet/);
+  assert.match(state.app.textContent, /Meine Ausweise/);
+  assert.equal(state.read().did, keys.did);
+  const link = find(state.app, (node) => node.attributes.name === 'link');
+  link.value = `${issuerUrl}/wallet.html${offer.fragment}`;
+  await submit(state.app);
+  await until(() => button(state.app, 'Ausgabecode prüfen & Ausweis empfangen'));
   assert.equal(state.location.hash, offer.fragment);
-  assert.equal(state.storage.has('wallet'), false);
+  assert.deepEqual(state.read().privateJwk, keys.privateJwk);
   assert.equal(offer.calls.claim, 0);
 });
 
@@ -978,7 +1091,7 @@ test('Pasted external QR is rejected visibly; a valid request is explicit and re
   const input = find(state.app, (node) => node.attributes.name === 'link');
   input.value = `https://external.example.org/wallet.html#req=${request.id}`;
   await submit(state.app);
-  assert.match(state.app.textContent, /dieser Workshop-Zentrale/);
+  assert.match(state.app.textContent, /dieser Anwendung/);
   assert.equal(state.location.hash, '');
   assert.equal(state.requests.filter((route) => route.includes('/requests/')).length, 0);
   input.value = `${issuerUrl}/wallet.html#req=${request.id}`;
