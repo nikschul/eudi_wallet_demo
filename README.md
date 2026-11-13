@@ -46,9 +46,9 @@ keinen Namen der bedienenden Person. Die Rollen heißen **Mitarbeitende**,
 
 Alle Seiten verwenden dieselbe Navigation: **Check-In**, **Aussteller** und
 **Wallet**. Blau kennzeichnet den Check-In, Gelb die Aussteller-Seite und Grün
-die Wallet. Der Aussteller-Link auf der Startseite öffnet einen neuen Tab,
-damit der Check-In geöffnet bleibt. Alte Links auf `/kiosk.html` führen zur
-Startseite weiter.
+die Wallet. Das Menü wechselt im selben Tab. Nur **„Organisation anlegen“**
+unter dem Check-In-QR öffnet einen neuen Tab, damit der Check-In geöffnet
+bleibt. Alte Links auf `/kiosk.html` führen zur Startseite weiter.
 
 **Wallet öffnen** führt ohne Einrichtungsdialog zur Ausweisablage. Vorhandene
 Wallet-Schlüssel werden weiterverwendet; nur wenn keine Wallet gespeichert ist,

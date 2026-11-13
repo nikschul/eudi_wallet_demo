@@ -35,6 +35,7 @@ test('Every app area has the same navigation, neutral branding and its own area 
     assert.ok(header, file);
     const nav = header.match(/<nav\b[\s\S]*?<\/nav>/)?.[0];
     assert.ok(nav, file);
+    assert.doesNotMatch(nav, /target="_blank"|neuer Tab/, file);
     const links = [...nav.matchAll(/<a\b([^>]*)>([^<]*)<\/a>/g)];
     assert.deepEqual(links.map(([, attrs, label]) => [attrs.match(/href="([^"]*)"/)?.[1], label.trim()]),
       [['/', 'Check-In'], ['/issuer.html', 'Aussteller'], ['/wallet.html', 'Wallet']], file);
@@ -44,13 +45,17 @@ test('Every app area has the same navigation, neutral branding and its own area 
   }
 });
 
-test('Organisation links on Check-In open a separate, isolated tab', async () => {
+test('Only the organisation setup entry opens a separate, isolated tab', async () => {
   const html = await source('index.html');
   const links = [...html.matchAll(/<a\b([^>]*href="\/issuer.html"[^>]*)>/g)];
-  assert.equal(links.length, 2, 'Both main navigation and setup entry retain the Check-In tab');
+  assert.equal(links.length, 2);
   for (const [, attributes] of links) {
-    assert.match(attributes, /target="_blank"/);
-    assert.match(attributes, /rel="noopener noreferrer"/);
+    if (attributes.includes('id="issuer-setup-link"')) {
+      assert.match(attributes, /target="_blank"/);
+      assert.match(attributes, /rel="noopener noreferrer"/);
+    } else {
+      assert.doesNotMatch(attributes, /target=|neuer Tab/);
+    }
   }
 });
 

@@ -83,10 +83,10 @@ Nur die öffentlichen Links verteilen, niemals die Logs oder den privaten
 Verwaltungslink. Teilnehmende benötigen weder Docker noch eigene Tunnel,
 Registry-Logins oder Admin-Token.
 
-Die Navigation ist überall **Check-In · Aussteller · Wallet**. Der
-Aussteller-Link auf der Check-In-Seite öffnet einen neuen Tab; der Check-In
-bleibt so für die anschließende Proberunde offen. **Wallet öffnen** führt
-direkt zur Wallet, ohne Einrichtungsabfrage.
+Die Navigation ist überall **Check-In · Aussteller · Wallet** und wechselt
+im selben Tab. Nur **„Organisation anlegen“** unter dem Check-In-QR öffnet
+einen neuen Tab, damit der Check-In für die Proberunde offen bleibt.
+**Wallet öffnen** führt direkt zur Wallet, ohne Einrichtungsabfrage.
 
 ## 5. Vor Beginn eine Proberunde durchführen
 
